@@ -77,7 +77,7 @@ void xtest_mutex_init(struct k_mutex *mutex)
 	int e = k_mutex_init(mutex);
 
 	if (e)
-		printk( "pthread_mutex_init: %s", strerror(e));
+		printk( "pthread_mutex_init: %s\n", strerror(e));
 }
 
 void xtest_mutex_destroy(struct k_mutex *mutex)
@@ -90,7 +90,7 @@ void xtest_mutex_lock(struct k_mutex *mutex)
 	int e = k_mutex_lock(mutex, K_FOREVER);
 
 	if (e)
-		printk( "pthread_mutex_lock: %s", strerror(e));
+		printk( "pthread_mutex_lock: %s\n", strerror(e));
 }
 
 void xtest_mutex_unlock(struct k_mutex *mutex)
@@ -98,5 +98,5 @@ void xtest_mutex_unlock(struct k_mutex *mutex)
 	int e = k_mutex_unlock(mutex);
 
 	if (e)
-		printk( "pthread_mutex_unlock: %s", strerror(e));
+		printk( "pthread_mutex_unlock: %si\n", strerror(e));
 }
