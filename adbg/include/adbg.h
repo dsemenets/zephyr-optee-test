@@ -17,69 +17,76 @@
  * Expect functions/macros
  */
 
-#define ADBG_EXPECT(Expected, Got) \
-	ADBG_EXPECT_ENUM(Expected, Got)
+#define ADBG_EXPECT(c, Expected, Got) \
+	ADBG_EXPECT_ENUM(c, Expected, Got)
 
-#define ADBG_EXPECT_NOT(Expected, Got) \
-	ADBG_EXPECT_NOT_ENUM(Expected, Got)
+#define ADBG_EXPECT_NOT(c, Expected, Got) \
+	ADBG_EXPECT_NOT_ENUM(c, Expected, Got)
 
-#define ADBG_EXPECT_ENUM(Expected, Got) \
-	Do_ADBG_Expect(__FILE__, __LINE__, Expected, Got, #Got)
+#define ADBG_EXPECT_ENUM(c, Expected, Got) \
+	Do_ADBG_Expect(c, __FILE__, __LINE__, Expected, Got, #Got)
 
-#define ADBG_EXPECT_NOT_ENUM(NotExpected, Got, EnumTable_p) \
-	Do_ADBG_ExpectNot(__FILE__, __LINE__,  NotExpected, Got, #Got)
+#define ADBG_EXPECT_NOT_ENUM(c, NotExpected, Got) \
+	Do_ADBG_ExpectNot(c, __FILE__, __LINE__,  NotExpected, Got, #Got)
 
-#define ADBG_EXPECT_BOOLEAN(Expected, Got) \
-	ADBG_EXPECT_ENUM(Expected, Got)
+#define ADBG_EXPECT_BOOLEAN(c, Expected, Got) \
+	ADBG_EXPECT_ENUM(c, Expected, Got)
 
-#define ADBG_EXPECT_TRUE(Got) \
-	ADBG_EXPECT_ENUM(true, Got)
+#define ADBG_EXPECT_TRUE(c, Got) \
+	ADBG_EXPECT_ENUM(c, true, Got)
 
-#define ADBG_EXPECT_EQUAL(Buf1_p, Buf2_p, Length) \
-	ADBG_EXPECT(0, memcmp(Buf1_p, Buf2_p, Length))
+#define ADBG_EXPECT_EQUAL(c, Buf1_p, Buf2_p, Length) \
+	ADBG_EXPECT(c, 0, memcmp(Buf1_p, Buf2_p, Length))
 
-#define ADBG_EXPECT_BUFFER(ExpBuf_p, ExpBufLen, GotBuf_p, GotBufLen) \
-	Do_ADBG_ExpectBuffer(__FILE__, __LINE__, \
+#define ADBG_EXPECT_BUFFER(c, ExpBuf_p, ExpBufLen, GotBuf_p, GotBufLen) \
+	Do_ADBG_ExpectBuffer(c, __FILE__, __LINE__, \
 			     ExpBuf_p, ExpBufLen, #GotBuf_p, GotBuf_p, \
 			     #GotBufLen, GotBufLen)
 
-#define ADBG_EXPECT_POINTER(Expected, Got) \
-	Do_ADBG_ExpectPointer(__FILE__, __LINE__, Expected, Got, #Got)
+#define ADBG_EXPECT_POINTER(c, Expected, Got) \
+	Do_ADBG_ExpectPointer(c, __FILE__, __LINE__, Expected, Got, #Got)
 
-#define ADBG_EXPECT_NOT_NULL(Got) \
+#define ADBG_EXPECT_NOT_NULL(c, Got) \
 	Do_ADBG_ExpectPointerNotNULL(__FILE__, __LINE__, Got, #Got)
 
-#define ADBG_EXPECT_COMPARE_SIGNED(Val1, Compar, Val2) \
-	Do_ADBG_ExpectCompareSigned(__FILE__, __LINE__, \
+#define ADBG_EXPECT_COMPARE_SIGNED(c, Val1, Compar, Val2) \
+	Do_ADBG_ExpectCompareSigned(c, __FILE__, __LINE__, \
 				    Val1, Val2, (Val1)Compar( \
 					    Val2), #Val1, #Compar, #Val2)
 
-#define ADBG_EXPECT_COMPARE_UNSIGNED(Val1, Compar, Val2) \
-	Do_ADBG_ExpectCompareUnsigned(__FILE__, __LINE__, \
+#define ADBG_EXPECT_COMPARE_UNSIGNED(c, Val1, Compar, Val2) \
+	Do_ADBG_ExpectCompareUnsigned(c, __FILE__, __LINE__, \
 				      Val1, Val2, (Val1)Compar( \
 					      Val2), #Val1, #Compar, #Val2)
 
-#define ADBG_EXPECT_COMPARE_POINTER(Val1, Compar, Val2) \
-	Do_ADBG_ExpectComparePointer(__FILE__, __LINE__, \
+#define ADBG_EXPECT_COMPARE_POINTER(c, Val1, Compar, Val2) \
+	Do_ADBG_ExpectComparePointer(c, __FILE__, __LINE__, \
 				     Val1, Val2, (Val1)Compar( \
 					     Val2), #Val1, #Compar, #Val2)
 
 
 #define ADBG_EXPECT_TEEC_RESULT(c, exp, got) \
-	ADBG_EXPECT_ENUM(exp, got)
+	ADBG_EXPECT_ENUM(c, exp, got)
 
 #define ADBG_EXPECT_TEEC_SUCCESS(c, got) \
-	ADBG_EXPECT_ENUM(TEEC_SUCCESS, got)
+	ADBG_EXPECT_ENUM(c, TEEC_SUCCESS, got)
 
-bool Do_ADBG_Expect(const char *const FileName_p,
+struct ADBG_Case {
+	const char *header;
+	bool success;
+};
+
+void ADBG_Assert(struct ADBG_Case *c);
+
+bool Do_ADBG_Expect(struct ADBG_Case *c, const char *const FileName_p,
 		    const int LineNumber, const int Expected, const int Got,
 		    const char *const GotVarName_p);
 
-bool Do_ADBG_ExpectNot(const char *const FileName_p,
+bool Do_ADBG_ExpectNot(struct ADBG_Case *c, const char *const FileName_p,
 		       const int LineNumber, const int NotExpected,
 		       const int Got, const char *const GotVarName_p);
 
-bool Do_ADBG_ExpectBuffer(const char *const FileName_p, const int LineNumber,
+bool Do_ADBG_ExpectBuffer(struct ADBG_Case *c, const char *const FileName_p, const int LineNumber,
 			  const void *const ExpectedBuffer_p,
 			  const size_t ExpectedBufferLength,
 			  const char *const GotBufferName_p,
@@ -87,22 +94,22 @@ bool Do_ADBG_ExpectBuffer(const char *const FileName_p, const int LineNumber,
 			  const char *const GotBufferLengthName_p,
 			  const size_t GotBufferLength);
 
-bool Do_ADBG_ExpectPointer(const char *const FileName_p, const int LineNumber,
+bool Do_ADBG_ExpectPointer(struct ADBG_Case *c, const char *const FileName_p, const int LineNumber,
 			   const void *Expected_p, const void *Got_p,
 			   const char *const GotVarName_p);
 
-bool Do_ADBG_ExpectPointerNotNULL(const char *const FileName_p,
+bool Do_ADBG_ExpectPointerNotNULL(struct ADBG_Case *c, const char *const FileName_p,
 				  const int LineNumber, const void *Got_p,
 				  const char *const GotVarName_p);
 
-bool Do_ADBG_ExpectCompareSigned(const char *const FileName_p,
+bool Do_ADBG_ExpectCompareSigned(struct ADBG_Case *c, const char *const FileName_p,
 				 const int LineNumber, const long Value1,
 				 const long Value2, const bool Result,
 				 const char *const Value1Str_p,
 				 const char *const ComparStr_p,
 				 const char *const Value2Str_p);
 
-bool Do_ADBG_ExpectCompareUnsigned(const char *const FileName_p,
+bool Do_ADBG_ExpectCompareUnsigned(struct ADBG_Case *c, const char *const FileName_p,
 				   const int LineNumber,
 				   const unsigned long Value1,
 				   const unsigned long Value2,
@@ -111,7 +118,7 @@ bool Do_ADBG_ExpectCompareUnsigned(const char *const FileName_p,
 				   const char *const ComparStr_p,
 				   const char *const Value2Str_p);
 
-bool Do_ADBG_ExpectComparePointer(const char *const FileName_p,
+bool Do_ADBG_ExpectComparePointer(struct ADBG_Case *c, const char *const FileName_p,
 				  const int LineNumber,
 				  const void *const Value1_p,
 				  const void *const Value2_p, const bool Result,

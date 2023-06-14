@@ -5,11 +5,10 @@
 
 #include <stdlib.h>
 #include <ctype.h>
-#include <zephyr/logging/log.h>
 #include <zephyr/kernel.h>
 #include <adbg.h>
 #include "security_utils_hex.h"
-LOG_MODULE_REGISTER(adbg);
+
 /******************************************************************************/
 /*! @fn void Do_ADBG_Log( void* This_p, char* Format, ...)
  * @brief

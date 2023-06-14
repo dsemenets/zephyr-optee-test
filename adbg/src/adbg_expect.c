@@ -8,7 +8,9 @@
  ************************************************************************/
 //#include "adbg_int.h"
 #include <adbg.h>
-#include <zephyr/logging/log.h>
+#include <zephyr/kernel.h>
+#include <zephyr/ztest.h>
+#include <string.h>
 /*************************************************************************
  * 2. Definition of external constants and variables
  ************************************************************************/
@@ -20,8 +22,7 @@
 /*************************************************************************
  * 4. Declaration of file local functions
  ************************************************************************/
-LOG_MODULE_REGISTER(adbg);
-static bool ADBG_AssertHelper(const char *const FileName_p,
+static bool ADBG_AssertHelper(struct ADBG_Case *c, const char *const FileName_p,
 			      const int LineNumber, const bool ExpressionOK);
 
 static const char *ADBG_GetFileBase(const char *const FileName_p);
@@ -30,6 +31,7 @@ static const char *ADBG_GetFileBase(const char *const FileName_p);
  * 5. Definition of external functions
  ************************************************************************/
 bool Do_ADBG_Expect(
+	struct ADBG_Case *c,
 	const char *const FileName_p,
 	const int LineNumber,
 	const int Expected,
@@ -37,10 +39,10 @@ bool Do_ADBG_Expect(
 	const char *const GotVarName_p
 	)
 {
-	if (ADBG_AssertHelper(FileName_p, LineNumber, Expected == Got))
+	if (ADBG_AssertHelper(c, FileName_p, LineNumber, Expected == Got))
 		return true;
 
-	LOG_PRINTK("%s:%d: %s has an unexpected value: 0x%x, expected 0x%x",
+	printk("%s:%d: %s has an unexpected value: 0x%x, expected 0x%x\n",
 			ADBG_GetFileBase(FileName_p), LineNumber,
 			GotVarName_p, Got, Expected);
 
@@ -48,6 +50,7 @@ bool Do_ADBG_Expect(
 }
 
 bool Do_ADBG_ExpectNot(
+	struct ADBG_Case *c,
 	const char *const FileName_p,
 	const int LineNumber,
 	const int NotExpected,
@@ -55,10 +58,10 @@ bool Do_ADBG_ExpectNot(
 	const char *const GotVarName_p
 	)
 {
-	if (ADBG_AssertHelper(FileName_p, LineNumber, NotExpected != Got))
+	if (ADBG_AssertHelper(c, FileName_p, LineNumber, NotExpected != Got))
 		return true;
 
-	LOG_PRINTK("%s:%d: %s has an unexpected value: 0x%zu, expected 0x%zu",
+	printk("%s:%d: %s has an unexpected value: 0x%zu, expected 0x%zu\n",
 		ADBG_GetFileBase(FileName_p), LineNumber,
 		GotVarName_p, (size_t)Got, (size_t)NotExpected);
 
@@ -66,6 +69,7 @@ bool Do_ADBG_ExpectNot(
 }
 
 bool Do_ADBG_ExpectBuffer(
+	struct ADBG_Case *c,
 	const char *const FileName_p,
 	const int LineNumber,
 	const void *const ExpectedBuffer_p,
@@ -76,10 +80,10 @@ bool Do_ADBG_ExpectBuffer(
 	const size_t GotBufferLength
 	)
 {
-	if (!ADBG_AssertHelper(FileName_p, LineNumber,
+	if (!ADBG_AssertHelper(c, FileName_p, LineNumber,
 			       ExpectedBufferLength == GotBufferLength)) {
-		LOG_PRINTK(
-			"%s:%d: %s has an unexpected value: %zu, expected %zu",
+		printk(
+			"%s:%d: %s has an unexpected value: %zu, expected %zu\n",
 			ADBG_GetFileBase(
 				FileName_p), LineNumber,
 			GotBufferLengthName_p, GotBufferLength,
@@ -87,15 +91,15 @@ bool Do_ADBG_ExpectBuffer(
 		return false;
 	}
 
-	if (!ADBG_AssertHelper(FileName_p, LineNumber,
+	if (!ADBG_AssertHelper(c, FileName_p, LineNumber,
 			       memcmp(ExpectedBuffer_p, GotBuffer_p,
 				      ExpectedBufferLength) == 0)) {
-		LOG_PRINTK("%s:%d: %s has an unexpected content:",
+		printk("%s:%d: %s has an unexpected content:\n",
 			    ADBG_GetFileBase(
 				    FileName_p), LineNumber, GotBufferName_p);
-		LOG_PRINTK("Got");
+		printk("Got\n");
 		Do_ADBG_HexLog(GotBuffer_p, GotBufferLength, 16);
-		LOG_PRINTK("Expected");
+		printk("Expected\n");
 		Do_ADBG_HexLog(ExpectedBuffer_p, ExpectedBufferLength, 16);
 		return false;
 	}
@@ -104,6 +108,7 @@ bool Do_ADBG_ExpectBuffer(
 }
 
 bool Do_ADBG_ExpectPointer(
+	struct ADBG_Case *c,
 	const char *const FileName_p,
 	const int LineNumber,
 	const void *Expected_p,
@@ -111,11 +116,11 @@ bool Do_ADBG_ExpectPointer(
 	const char *const GotVarName_p
 	)
 {
-	if (ADBG_AssertHelper(FileName_p, LineNumber, Expected_p ==
+	if (ADBG_AssertHelper(c, FileName_p, LineNumber, Expected_p ==
 			      Got_p))
 		return true;
 
-	LOG_PRINTK("%s:%d: %s has an unexpected value: %p, expected %p",
+	printk("%s:%d: %s has an unexpected value: %p, expected %p\n",
 		    ADBG_GetFileBase(FileName_p), LineNumber,
 		    GotVarName_p, Got_p, Expected_p);
 
@@ -125,16 +130,17 @@ bool Do_ADBG_ExpectPointer(
 
 
 bool Do_ADBG_ExpectPointerNotNULL(
+	struct ADBG_Case *c,
 	const char *const FileName_p,
 	const int LineNumber,
 	const void *Got_p,
 	const char *const GotVarName_p
 	)
 {
-	if (ADBG_AssertHelper(FileName_p, LineNumber, Got_p != NULL))
+	if (ADBG_AssertHelper(c, FileName_p, LineNumber, Got_p != NULL))
 		return true;
 
-	LOG_PRINTK("%s:%d: %s has an unexpected value: %p, expected not NULL",
+	printk("%s:%d: %s has an unexpected value: %p, expected not NULL\n",
 		    ADBG_GetFileBase(FileName_p), LineNumber,
 		    GotVarName_p, Got_p);
 
@@ -142,6 +148,7 @@ bool Do_ADBG_ExpectPointerNotNULL(
 }
 
 bool Do_ADBG_ExpectCompareSigned(
+	struct ADBG_Case *c,
 	const char *const FileName_p,
 	const int LineNumber,
 	const long Value1,
@@ -152,9 +159,9 @@ bool Do_ADBG_ExpectCompareSigned(
 	const char *const Value2Str_p
 	)
 {
-	if (!ADBG_AssertHelper(FileName_p, LineNumber, Result)) {
-		LOG_PRINTK(
-			"%s:%d: Expression \"%s %s %s\" (%ld %s %ld) is false",
+	if (!ADBG_AssertHelper(c, FileName_p, LineNumber, Result)) {
+		printk(
+			"%s:%d: Expression \"%s %s %s\" (%ld %s %ld) is false\n",
 			ADBG_GetFileBase(FileName_p), LineNumber,
 			Value1Str_p, ComparStr_p, Value2Str_p,
 			Value1, ComparStr_p, Value2);
@@ -163,6 +170,7 @@ bool Do_ADBG_ExpectCompareSigned(
 }
 
 bool Do_ADBG_ExpectCompareUnsigned(
+	struct ADBG_Case *c,
 	const char *const FileName_p,
 	const int LineNumber,
 	const unsigned long Value1,
@@ -173,9 +181,9 @@ bool Do_ADBG_ExpectCompareUnsigned(
 	const char *const Value2Str_p
 	)
 {
-	if (!ADBG_AssertHelper(FileName_p, LineNumber, Result)) {
-		LOG_PRINTK(
-			"%s:%d: Expression \"%s %s %s\" (%lu %s %lu) is false",
+	if (!ADBG_AssertHelper(c, FileName_p, LineNumber, Result)) {
+		printk(
+			"%s:%d: Expression \"%s %s %s\" (%lu %s %lu) is false\n",
 			ADBG_GetFileBase(FileName_p), LineNumber,
 			Value1Str_p, ComparStr_p, Value2Str_p,
 			Value1, ComparStr_p, Value2);
@@ -185,6 +193,7 @@ bool Do_ADBG_ExpectCompareUnsigned(
 
 
 bool Do_ADBG_ExpectComparePointer(
+	struct ADBG_Case *c,
 	const char *const FileName_p,
 	const int LineNumber,
 	const void *const Value1_p,
@@ -195,9 +204,9 @@ bool Do_ADBG_ExpectComparePointer(
 	const char *const Value2Str_p
 	)
 {
-	if (!ADBG_AssertHelper(FileName_p, LineNumber, Result)) {
-		LOG_PRINTK(
-			"%s:%d: Expression \"%s %s %s\" (%p %s %p) is false",
+	if (!ADBG_AssertHelper(c, FileName_p, LineNumber, Result)) {
+		printk(
+			"%s:%d: Expression \"%s %s %s\" (%p %s %p) is false\n",
 			ADBG_GetFileBase(FileName_p), LineNumber,
 			Value1Str_p, ComparStr_p, Value2Str_p,
 			Value1_p, ComparStr_p, Value2_p);
@@ -209,13 +218,22 @@ bool Do_ADBG_ExpectComparePointer(
  * 6. Definitions of internal functions
  ************************************************************************/
 static bool ADBG_AssertHelper(
+	struct ADBG_Case *c,
 	const char *const FileName_p,
 	const int LineNumber,
 	const bool ExpressionOK
 	)
 {
-
+	c->success = ExpressionOK;
 	return ExpressionOK;
+}
+
+void ADBG_Assert(struct ADBG_Case *c)
+{
+	if (!c->success) {
+		printk("%s Failed\n", c->header);
+		zassert_true(c->success);
+	}
 }
 
 static const char *ADBG_GetFileBase(const char *const FileName_p)

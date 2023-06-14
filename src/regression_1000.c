@@ -20,9 +20,12 @@
 
 #define PAGER_PAGE_COUNT_THRESHOLD	((128 * 1024) / 4096)
 
+extern TEEC_Context xtest_teec_ctx;
+
 void *regression_1000_init(void)
 {
 	printk("Begin Test suite 1000\n");
+        (void)TEEC_InitializeContext(NULL, &xtest_teec_ctx);
 	return NULL;
 }
 
@@ -30,6 +33,7 @@ void regression_1000_deinit(void *param)
 {
 	(void)param;
 	printk("End Test suite 1000\n");
+    TEEC_FinalizeContext(&xtest_teec_ctx);
 }
 
 struct xtest_crypto_session {
@@ -38,6 +42,7 @@ struct xtest_crypto_session {
 	uint32_t cmd_id_aes256ecb_encrypt;
 	uint32_t cmd_id_aes256ecb_decrypt;
 };
+
 
 static bool optee_pager_with_small_pool(void)
 {
@@ -81,9 +86,11 @@ ZTEST(regression_1000, test_1001)
 	TEEC_Result res = TEEC_ERROR_GENERIC;
 	TEEC_Session session = { };
 	uint32_t ret_orig = 0;
+	struct ADBG_Case c = {
+		.header = "Test 1001",
+	};
 
 
-	BeginTest(__func__);
 	/* Pseudo TA is optional: warn and nicely exit if not found */
 	res = xtest_teec_open_session(&session, &pta_invoke_tests_ta_uuid, NULL,
 				      &ret_orig);
@@ -91,26 +98,29 @@ ZTEST(regression_1000, test_1001)
 		printk(" - 1001 -   skip test, pseudo TA not found");
 		return;
 	}
-	if (!ADBG_EXPECT_TEEC_SUCCESS(c, res))
+	if (!ADBG_EXPECT_TEEC_SUCCESS(&c, res)) {
+		printk("open session returned %u\n", res);
+		ADBG_Assert(&c);
 		return;
+	}
 
 	BeginSubCase("Core self tests");
 
-	(void)ADBG_EXPECT_TEEC_SUCCESS(c, TEEC_InvokeCommand(
+	(void)ADBG_EXPECT_TEEC_SUCCESS(&c, TEEC_InvokeCommand(
 		&session, PTA_INVOKE_TESTS_CMD_SELF_TESTS, NULL, &ret_orig));
 
 	EndSubCase("Core self tests");
 
 	BeginSubCase("Core dt_driver self tests");
 
-	(void)ADBG_EXPECT_TEEC_SUCCESS(c, TEEC_InvokeCommand(
+	(void)ADBG_EXPECT_TEEC_SUCCESS(&c, TEEC_InvokeCommand(
 		&session, PTA_INVOKE_TESTS_CMD_DT_DRIVER_TESTS, NULL,
 		&ret_orig));
 
 	EndSubCase("Core dt_driver self tests");
 
 	TEEC_CloseSession(&session);
-	EndTest(__func__);
+	ADBG_Assert(&c);
 }
 
 ZTEST(regression_1000, test_1002)
@@ -122,8 +132,10 @@ ZTEST(regression_1000, test_1002)
 	uint8_t buf[16 * 1024] = { };
 	uint8_t exp_sum = 0;
 	size_t n = 0;
+	struct ADBG_Case c = {
+		.header = "Test 1002",
+	};
 
-	BeginTest(__func__);
 	/* Pseudo TA is optional: warn and nicely exit if not found */
 	res = xtest_teec_open_session(&session, &pta_invoke_tests_ta_uuid, NULL,
 				      &ret_orig);
@@ -131,7 +143,7 @@ ZTEST(regression_1000, test_1002)
 		printk(" - 1002 -   skip test, pseudo TA not found");
 		return;
 	}
-	ADBG_EXPECT_TEEC_SUCCESS(c, res);
+	ADBG_EXPECT_TEEC_SUCCESS(&c, res);
 
 	op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_INOUT, TEEC_NONE,
 					 TEEC_NONE, TEEC_NONE);
@@ -143,15 +155,158 @@ ZTEST(regression_1000, test_1002)
 	for (n = 0; n < sizeof(buf); n++)
 		exp_sum += buf[n];
 
-	if (!ADBG_EXPECT_TEEC_SUCCESS(c, TEEC_InvokeCommand(
+	if (!ADBG_EXPECT_TEEC_SUCCESS(&c, TEEC_InvokeCommand(
 		&session, PTA_INVOKE_TESTS_CMD_PARAMS, &op, &ret_orig)))
 		goto out;
 
-	ADBG_EXPECT_COMPARE_SIGNED(exp_sum, ==, buf[0]);
+	ADBG_EXPECT_COMPARE_SIGNED(&c, exp_sum, ==, buf[0]);
 out:
 	TEEC_CloseSession(&session);
-	EndTest(__func__);
+	ADBG_Assert(&c);
 }
 
+struct test_1003_arg {
+	uint32_t test_type;
+	size_t repeat;
+	size_t max_before_lockers;
+	size_t max_during_lockers;
+	size_t before_lockers;
+	size_t during_lockers;
+	TEEC_Result res;
+	uint32_t error_orig;
+};
+
+static void test_1003_thread(void *arg1, __attribute__ ((unused)) void *arg2,
+			      __attribute__ ((unused)) void *arg3)
+{
+	struct test_1003_arg *a = (struct test_1003_arg *)arg1;
+	TEEC_Session session = { };
+	size_t rounds = 64 * 1024;
+	size_t n = 0;
+
+	a->res = xtest_teec_open_session(&session, &pta_invoke_tests_ta_uuid,
+					 NULL, &a->error_orig);
+	if (a->res != TEEC_SUCCESS)
+		return;
+
+	for (n = 0; n < a->repeat; n++) {
+		TEEC_Operation op = TEEC_OPERATION_INITIALIZER;
+
+		op.params[0].value.a = a->test_type;
+		op.params[0].value.b = rounds;
+
+		op.paramTypes = TEEC_PARAM_TYPES(TEEC_VALUE_INPUT,
+						 TEEC_VALUE_OUTPUT,
+						 TEEC_NONE, TEEC_NONE);
+		a->res = TEEC_InvokeCommand(&session,
+					    PTA_INVOKE_TESTS_CMD_MUTEX,
+					    &op, &a->error_orig);
+		if (a->test_type == PTA_MUTEX_TEST_WRITER &&
+		    op.params[1].value.b != 1) {
+			printk("n %zu %" PRIu32, n, op.params[1].value.b);
+			a->res = TEEC_ERROR_BAD_STATE;
+			a->error_orig = 42;
+			break;
+		}
+
+		if (a->test_type == PTA_MUTEX_TEST_READER) {
+			if (op.params[1].value.a > a->max_before_lockers)
+				a->max_before_lockers = op.params[1].value.a;
+
+			if (op.params[1].value.b > a->max_during_lockers)
+				a->max_during_lockers = op.params[1].value.b;
+
+			a->before_lockers += op.params[1].value.a;
+			a->during_lockers += op.params[1].value.b;
+		}
+	}
+	TEEC_CloseSession(&session);
+
+	return;
+}
+
+#define TEST_1003_THREAD_COUNT		(3 * 2)
+static struct k_thread thr[TEST_1003_THREAD_COUNT];
+static struct test_1003_arg arg[TEST_1003_THREAD_COUNT] = { };
+#define STACKSIZE (256 + CONFIG_TEST_EXTRA_STACK_SIZE)
+static K_THREAD_STACK_ARRAY_DEFINE(thread_stack, TEST_1003_THREAD_COUNT, STACKSIZE);
+
+ZTEST(regression_1000, test_1003)
+{
+	TEEC_Result res = TEEC_ERROR_GENERIC;
+	TEEC_Session session = { };
+	uint32_t ret_orig = 0;
+	size_t repeat = 20;
+	size_t max_read_concurrency = 0;
+	size_t max_read_waiters = 0;
+	size_t num_concurrent_read_lockers = 0;
+	size_t num_concurrent_read_waiters = 0;
+	size_t n = 0;
+	size_t nt = TEST_1003_THREAD_COUNT;
+	double mean_read_concurrency = 0;
+	double mean_read_waiters = 0;
+	size_t num_writers = 0;
+	size_t num_readers = 0;
+	struct ADBG_Case c = {
+		.header = "Test 1003",
+	};
+
+	/* Pseudo TA is optional: warn and nicely exit if not found */
+	res = xtest_teec_open_session(&session, &pta_invoke_tests_ta_uuid, NULL,
+				      &ret_orig);
+	if (res == TEEC_ERROR_ITEM_NOT_FOUND) {
+		printk(" - 1003 -   skip test, pseudo TA not found\n");
+		return;
+	}
+	ADBG_EXPECT_TEEC_SUCCESS(&c, res);
+	TEEC_CloseSession(&session);
+
+	for (n = 0; n < nt; n++) {
+		k_tid_t tid;
+		if (n % 3) {
+			arg[n].test_type = PTA_MUTEX_TEST_READER;
+			num_readers++;
+		} else {
+			arg[n].test_type = PTA_MUTEX_TEST_WRITER;
+			num_writers++;
+		}
+		arg[n].repeat = repeat;
+		tid = k_thread_create(thr+n, thread_stack[n], STACKSIZE, test_1003_thread,
+				      arg+n, NULL, NULL, K_PRIO_PREEMPT(0), K_USER, K_NO_WAIT);
+		if (!ADBG_EXPECT_NOT(&c, 0, (long)tid))
+			nt = n; /* break loop and start cleanup */
+	}
+
+	for (n = 0; n < nt; n++) {
+		ADBG_EXPECT(&c, 0, k_thread_join(thr+n, K_FOREVER));
+		if (!ADBG_EXPECT_TEEC_SUCCESS(&c, arg[n].res))
+			printk("error origin %" PRIu32,
+				    arg[n].error_orig);
+		if (arg[n].test_type == PTA_MUTEX_TEST_READER) {
+			if (arg[n].max_during_lockers > max_read_concurrency)
+				max_read_concurrency =
+					arg[n].max_during_lockers;
+
+			if (arg[n].max_before_lockers > max_read_waiters)
+				max_read_waiters = arg[n].max_before_lockers;
+
+			num_concurrent_read_lockers += arg[n].during_lockers;
+			num_concurrent_read_waiters += arg[n].before_lockers;
+		}
+	}
+
+	mean_read_concurrency = (double)num_concurrent_read_lockers /
+				(double)(repeat * num_readers);
+	mean_read_waiters = (double)num_concurrent_read_waiters /
+			    (double)(repeat * num_readers);
+
+	printk("    Number of parallel threads: %d (%zu writers and %zu readers)",
+		    TEST_1003_THREAD_COUNT, num_writers, num_readers);
+	printk("    Max read concurrency: %zu", max_read_concurrency);
+	printk("    Max read waiters: %zu", max_read_waiters);
+	printk("    Mean read concurrency: %g", mean_read_concurrency);
+	printk("    Mean read waiting: %g", mean_read_waiters);
+	ADBG_Assert(&c);
+}
 ZTEST_SUITE(regression_1000, NULL, regression_1000_init, NULL, NULL, regression_1000_deinit);
 
