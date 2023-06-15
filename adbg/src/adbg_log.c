@@ -46,7 +46,7 @@ void Do_ADBG_HexLog(
 		AsciiBuffer[m] = '\0';
 
 //		LOG_PRINTK("  %-*s %s", (int)Cols * 3, HexBuffer, AsciiBuffer);
-		printk("  %-*s %s", (int)Cols * 3, HexBuffer, AsciiBuffer);
+		printk("  %-*s %s\n", (int)Cols * 3, HexBuffer, AsciiBuffer);
 	}
 }
 

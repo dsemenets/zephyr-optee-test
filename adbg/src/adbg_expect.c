@@ -231,9 +231,10 @@ static bool ADBG_AssertHelper(
 void ADBG_Assert(struct ADBG_Case *c)
 {
 	if (!c->success) {
-		printk("%s Failed\n", c->header);
+		printk("--== %s Failed ==--\n", c->name);
 		zassert_true(c->success);
 	}
+        printk("--== %s Passed ==--\n", c->name);
 }
 
 static const char *ADBG_GetFileBase(const char *const FileName_p)
