@@ -71,10 +71,19 @@
 #define ADBG_EXPECT_TEEC_SUCCESS(c, got) \
 	ADBG_EXPECT_ENUM(c, TEEC_SUCCESS, got)
 
+#define ADBG_EXPECT_TEEC_ERROR_ORIGIN(c, exp, got) \
+	ADBG_EXPECT_ENUM(c, exp, got)
+
 struct ADBG_Case {
-	const char *header;
+	const char *name;
 	bool success;
 };
+
+#define ADBG_STRUCT_DECLARE(test_name)                 \
+	struct ADBG_Case c = {                         \
+		.name = test_name,                     \
+	};                                             \
+	printk("--== %s ==--\n", c.name)
 
 void ADBG_Assert(struct ADBG_Case *c);
 

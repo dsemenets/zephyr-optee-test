@@ -37,6 +37,7 @@ void regression_1000_deinit(void *param)
 }
 
 struct xtest_crypto_session {
+	struct ADBG_Case *c;
 	TEEC_Session *session;
 	uint32_t cmd_id_sha256;
 	uint32_t cmd_id_aes256ecb_encrypt;
@@ -81,15 +82,193 @@ out_ctx:
 	return rc;
 }
 
+static void xtest_crypto_test(struct xtest_crypto_session *cs)
+{
+	uint32_t ret_orig = 0;
+	uint8_t crypt_out[16] = { };
+	uint8_t crypt_in[16] = { 22, 17 };
+
+	crypt_in[15] = 60;
+
+	BeginSubCase("AES encrypt");
+	{
+		TEEC_Operation op = TEEC_OPERATION_INITIALIZER;
+
+		op.params[0].tmpref.buffer = crypt_in;
+		op.params[0].tmpref.size = sizeof(crypt_in);
+		op.params[1].tmpref.buffer = crypt_out;
+		op.params[1].tmpref.size = sizeof(crypt_out);
+		op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_INPUT,
+						 TEEC_MEMREF_TEMP_OUTPUT,
+						 TEEC_NONE, TEEC_NONE);
+
+		(void)ADBG_EXPECT_TEEC_SUCCESS(cs->c,
+					       TEEC_InvokeCommand(cs->session,
+						cs->
+						cmd_id_aes256ecb_encrypt,
+						&op,
+						&ret_orig));
+	}
+	EndSubCase("AES encrypt");
+
+	BeginSubCase("AES decrypt");
+	{
+		TEEC_Operation op = TEEC_OPERATION_INITIALIZER;
+		uint8_t out[16] = { };
+
+		op.params[0].tmpref.buffer = crypt_out;
+		op.params[0].tmpref.size = sizeof(crypt_out);
+		op.params[1].tmpref.buffer = out;
+		op.params[1].tmpref.size = sizeof(out);
+		op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_INPUT,
+						 TEEC_MEMREF_TEMP_OUTPUT,
+						 TEEC_NONE, TEEC_NONE);
+
+		(void)ADBG_EXPECT_TEEC_SUCCESS(cs->c,
+					       TEEC_InvokeCommand(cs->session,
+						cs->
+						cmd_id_aes256ecb_decrypt,
+						&op,
+						&ret_orig));
+
+		if (!ADBG_EXPECT(cs->c, 0,
+				 memcmp(crypt_in, out, sizeof(crypt_in)))) {
+			printk("crypt_in:\n");
+			Do_ADBG_HexLog(crypt_in, sizeof(crypt_in), 16);
+			printk("out:\n");
+			Do_ADBG_HexLog(out, sizeof(out), 16);
+		}
+	}
+	EndSubCase("AES decrypt");
+
+	BeginSubCase("SHA-256 test, 3 bytes input");
+	{
+		TEEC_Operation op = TEEC_OPERATION_INITIALIZER;
+		static const uint8_t sha256_in[] = { 'a', 'b', 'c' };
+		static const uint8_t sha256_out[] = {
+			0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea,
+			0x41, 0x41, 0x40, 0xde, 0x5d, 0xae, 0x22, 0x23,
+			0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c,
+			0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00, 0x15, 0xad
+		};
+		uint8_t out[32] = { };
+
+		op.params[0].tmpref.buffer = (void *)sha256_in;
+		op.params[0].tmpref.size = sizeof(sha256_in);
+		op.params[1].tmpref.buffer = out;
+		op.params[1].tmpref.size = sizeof(out);
+		op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_INPUT,
+						 TEEC_MEMREF_TEMP_OUTPUT,
+						 TEEC_NONE, TEEC_NONE);
+
+		(void)ADBG_EXPECT_TEEC_SUCCESS(cs->c,
+					       TEEC_InvokeCommand(cs->session,
+								  cs->
+								  cmd_id_sha256,
+								  &op,
+								  &ret_orig));
+
+		if (!ADBG_EXPECT(cs->c, 0, memcmp(sha256_out, out,
+						  sizeof(sha256_out)))) {
+			printk("sha256_out:\n");
+			Do_ADBG_HexLog(sha256_out, sizeof(sha256_out), 16);
+			printk("out:\n");
+			Do_ADBG_HexLog(out, sizeof(out), 16);
+		}
+	}
+	EndSubCase("SHA-256 test, 3 bytes input");
+
+	BeginSubCase("AES-256 ECB encrypt (32B, fixed key)");
+	{
+		TEEC_Operation op = TEEC_OPERATION_INITIALIZER;
+		static const uint8_t in[] = {
+			0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+			0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+			0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+			0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f
+		};
+		static const uint8_t exp_out[] = {
+			0x5A, 0x6E, 0x04, 0x57, 0x08, 0xFB, 0x71, 0x96,
+			0xF0, 0x2E, 0x55, 0x3D, 0x02, 0xC3, 0xA6, 0x92,
+			0xE9, 0xC3, 0xEF, 0x8A, 0xB2, 0x34, 0x53, 0xE6,
+			0xF0, 0x74, 0x9C, 0xD6, 0x36, 0xE7, 0xA8, 0x8E
+		};
+		uint8_t out[sizeof(exp_out)] = { };
+
+		op.params[0].tmpref.buffer = (void *)in;
+		op.params[0].tmpref.size = sizeof(in);
+		op.params[1].tmpref.buffer = out;
+		op.params[1].tmpref.size = sizeof(out);
+		op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_INPUT,
+						 TEEC_MEMREF_TEMP_OUTPUT,
+						 TEEC_NONE, TEEC_NONE);
+
+		(void)ADBG_EXPECT_TEEC_SUCCESS(cs->c,
+					TEEC_InvokeCommand(cs->session,
+					cs->
+					cmd_id_aes256ecb_encrypt,
+					&op,
+					&ret_orig));
+
+		if (!ADBG_EXPECT(cs->c, 0,
+				 memcmp(exp_out, out, sizeof(exp_out)))) {
+			printk("exp_out:\n");
+			Do_ADBG_HexLog(exp_out, sizeof(exp_out), 16);
+			printk("out:\n");
+			Do_ADBG_HexLog(out, sizeof(out), 16);
+		}
+	}
+	EndSubCase("AES-256 ECB encrypt (32B, fixed key)");
+
+	BeginSubCase("AES-256 ECB decrypt (32B, fixed key)");
+	{
+		TEEC_Operation op = TEEC_OPERATION_INITIALIZER;
+		static const uint8_t in[] = {
+			0x5A, 0x6E, 0x04, 0x57, 0x08, 0xFB, 0x71, 0x96,
+			0xF0, 0x2E, 0x55, 0x3D, 0x02, 0xC3, 0xA6, 0x92,
+			0xE9, 0xC3, 0xEF, 0x8A, 0xB2, 0x34, 0x53, 0xE6,
+			0xF0, 0x74, 0x9C, 0xD6, 0x36, 0xE7, 0xA8, 0x8E
+		};
+		static const uint8_t exp_out[] = {
+			0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+			0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+			0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+			0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f
+		};
+		uint8_t out[sizeof(exp_out)] = { };
+
+		op.params[0].tmpref.buffer = (void *)in;
+		op.params[0].tmpref.size = sizeof(in);
+		op.params[1].tmpref.buffer = out;
+		op.params[1].tmpref.size = sizeof(out);
+		op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_INPUT,
+						 TEEC_MEMREF_TEMP_OUTPUT,
+						 TEEC_NONE, TEEC_NONE);
+
+		(void)ADBG_EXPECT_TEEC_SUCCESS(cs->c,
+				       TEEC_InvokeCommand(cs->session,
+					cs->
+					cmd_id_aes256ecb_decrypt,
+					&op,
+					&ret_orig));
+
+		if (!ADBG_EXPECT(cs->c, 0,
+				 memcmp(exp_out, out, sizeof(exp_out)))) {
+			printk("exp_out:\n");
+			Do_ADBG_HexLog(exp_out, sizeof(exp_out), 16);
+			printk("out:\n");
+			Do_ADBG_HexLog(out, sizeof(out), 16);
+		}
+	}
+	EndSubCase("AES-256 ECB decrypt (32B, fixed key)");
+}
+
 ZTEST(regression_1000, test_1001)
 {
 	TEEC_Result res = TEEC_ERROR_GENERIC;
 	TEEC_Session session = { };
 	uint32_t ret_orig = 0;
-	struct ADBG_Case c = {
-		.header = "Test 1001",
-	};
-
+	ADBG_STRUCT_DECLARE("Core self tests");
 
 	/* Pseudo TA is optional: warn and nicely exit if not found */
 	res = xtest_teec_open_session(&session, &pta_invoke_tests_ta_uuid, NULL,
@@ -99,7 +278,6 @@ ZTEST(regression_1000, test_1001)
 		return;
 	}
 	if (!ADBG_EXPECT_TEEC_SUCCESS(&c, res)) {
-		printk("open session returned %u\n", res);
 		ADBG_Assert(&c);
 		return;
 	}
@@ -132,9 +310,7 @@ ZTEST(regression_1000, test_1002)
 	uint8_t buf[16 * 1024] = { };
 	uint8_t exp_sum = 0;
 	size_t n = 0;
-	struct ADBG_Case c = {
-		.header = "Test 1002",
-	};
+	ADBG_STRUCT_DECLARE("PTA parameters");
 
 	/* Pseudo TA is optional: warn and nicely exit if not found */
 	res = xtest_teec_open_session(&session, &pta_invoke_tests_ta_uuid, NULL,
@@ -143,7 +319,10 @@ ZTEST(regression_1000, test_1002)
 		printk(" - 1002 -   skip test, pseudo TA not found");
 		return;
 	}
-	ADBG_EXPECT_TEEC_SUCCESS(&c, res);
+	if (!ADBG_EXPECT_TEEC_SUCCESS(&c, res)) {
+		ADBG_Assert(&c);
+		return;
+	}
 
 	op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_INOUT, TEEC_NONE,
 					 TEEC_NONE, TEEC_NONE);
@@ -247,9 +426,7 @@ ZTEST(regression_1000, test_1003)
 	double mean_read_waiters = 0;
 	size_t num_writers = 0;
 	size_t num_readers = 0;
-	struct ADBG_Case c = {
-		.header = "Test 1003",
-	};
+	ADBG_STRUCT_DECLARE("Core internal read/write mutex");
 
 	/* Pseudo TA is optional: warn and nicely exit if not found */
 	res = xtest_teec_open_session(&session, &pta_invoke_tests_ta_uuid, NULL,
@@ -258,7 +435,10 @@ ZTEST(regression_1000, test_1003)
 		printk(" - 1003 -   skip test, pseudo TA not found\n");
 		return;
 	}
-	ADBG_EXPECT_TEEC_SUCCESS(&c, res);
+	if (!ADBG_EXPECT_TEEC_SUCCESS(&c, res)) {
+		ADBG_Assert(&c);
+		return;
+	}
 	TEEC_CloseSession(&session);
 
 	for (n = 0; n < nt; n++) {
@@ -280,8 +460,7 @@ ZTEST(regression_1000, test_1003)
 	for (n = 0; n < nt; n++) {
 		ADBG_EXPECT(&c, 0, k_thread_join(thr+n, K_FOREVER));
 		if (!ADBG_EXPECT_TEEC_SUCCESS(&c, arg[n].res))
-			printk("error origin %" PRIu32,
-				    arg[n].error_orig);
+			printk("error origin %" PRIu32 "\n", arg[n].error_orig);
 		if (arg[n].test_type == PTA_MUTEX_TEST_READER) {
 			if (arg[n].max_during_lockers > max_read_concurrency)
 				max_read_concurrency =
@@ -300,13 +479,118 @@ ZTEST(regression_1000, test_1003)
 	mean_read_waiters = (double)num_concurrent_read_waiters /
 			    (double)(repeat * num_readers);
 
-	printk("    Number of parallel threads: %d (%zu writers and %zu readers)",
+	printk("    Number of parallel threads: %d (%zu writers and %zu readers)\n",
 		    TEST_1003_THREAD_COUNT, num_writers, num_readers);
-	printk("    Max read concurrency: %zu", max_read_concurrency);
-	printk("    Max read waiters: %zu", max_read_waiters);
-	printk("    Mean read concurrency: %g", mean_read_concurrency);
-	printk("    Mean read waiting: %g", mean_read_waiters);
+	printk("    Max read concurrency: %zu\n", max_read_concurrency);
+	printk("    Max read waiters: %zu\n", max_read_waiters);
+	printk("    Mean read concurrency: %g\n", mean_read_concurrency);
+	printk("    Mean read waiting: %g\n", mean_read_waiters);
 	ADBG_Assert(&c);
 }
+
+ZTEST(regression_1000, test_1004)
+{
+	TEEC_Session session = { };
+	uint32_t ret_orig = 0;
+	ADBG_STRUCT_DECLARE("Test User Crypt TA");
+
+	struct xtest_crypto_session cs = { &c, &session, TA_CRYPT_CMD_SHA256,
+					   TA_CRYPT_CMD_AES256ECB_ENC,
+					   TA_CRYPT_CMD_AES256ECB_DEC };
+
+	if (!ADBG_EXPECT_TEEC_SUCCESS(&c, xtest_teec_open_session(
+					      &session, &crypt_user_ta_uuid,
+					      NULL, &ret_orig))) {
+		ADBG_Assert(&c);
+		return;
+	}
+
+	/* Run the "complete crypto test suite" */
+	xtest_crypto_test(&cs);
+
+	TEEC_CloseSession(&session);
+	ADBG_Assert(&c);
+}
+
+ZTEST(regression_1000, test_1005)
+{
+	uint32_t ret_orig = 0;
+#define MAX_SESSIONS    3
+	TEEC_Session sessions[MAX_SESSIONS];
+	int i = 0;
+	ADBG_STRUCT_DECLARE("Many sessions");
+
+	for (i = 0; i < MAX_SESSIONS; i++) {
+		if (!ADBG_EXPECT_TEEC_SUCCESS(&c,
+			xtest_teec_open_session(&sessions[i],
+						&concurrent_ta_uuid,
+						NULL, &ret_orig)))
+			break;
+	}
+
+	for (; --i >= 0; )
+		TEEC_CloseSession(&sessions[i]);
+	ADBG_Assert(&c);
+}
+
+ZTEST(regression_1000, test_1006)
+{
+	TEEC_Session session = { };
+	uint32_t ret_orig = 0;
+	TEEC_Operation op = TEEC_OPERATION_INITIALIZER;
+	uint8_t buf[32] = { };
+	ADBG_STRUCT_DECLARE("Test Basic OS features");
+
+	if (!ADBG_EXPECT_TEEC_SUCCESS(&c,
+		xtest_teec_open_session(&session, &os_test_ta_uuid, NULL,
+					&ret_orig))) {
+		ADBG_Assert(&c);
+		return;
+	}
+
+	op.params[0].tmpref.buffer = buf;
+	op.params[0].tmpref.size = sizeof(buf);
+	op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_INPUT, TEEC_NONE,
+					 TEEC_NONE, TEEC_NONE);
+
+	(void)ADBG_EXPECT_TEEC_SUCCESS(&c,
+		TEEC_InvokeCommand(&session, TA_OS_TEST_CMD_BASIC, &op,
+				   &ret_orig));
+
+	TEEC_CloseSession(&session);
+	ADBG_Assert(&c);
+}
+
+ZTEST(regression_1000, test_1007)
+{
+	TEEC_Session session = { };
+	uint32_t ret_orig = 0;
+	ADBG_STRUCT_DECLARE("Test Panic");
+
+	if (!ADBG_EXPECT_TEEC_SUCCESS(&c,
+		xtest_teec_open_session(&session, &os_test_ta_uuid, NULL,
+		                        &ret_orig))) {
+		ADBG_Assert(&c);
+		return;
+	}
+
+	(void)ADBG_EXPECT_TEEC_RESULT(&c,
+		TEEC_ERROR_TARGET_DEAD,
+		TEEC_InvokeCommand(&session, TA_OS_TEST_CMD_PANIC, NULL,
+				   &ret_orig));
+
+	(void)ADBG_EXPECT_TEEC_ERROR_ORIGIN(&c, TEEC_ORIGIN_TEE, ret_orig);
+
+	(void)ADBG_EXPECT_TEEC_RESULT(&c,
+		TEEC_ERROR_TARGET_DEAD,
+		TEEC_InvokeCommand(&session, TA_OS_TEST_CMD_INIT, NULL,
+				   &ret_orig));
+
+	(void)ADBG_EXPECT_TEEC_ERROR_ORIGIN(&c, TEEC_ORIGIN_TEE, ret_orig);
+
+	TEEC_CloseSession(&session);
+	ADBG_Assert(&c);
+}
+
 ZTEST_SUITE(regression_1000, NULL, regression_1000_init, NULL, NULL, regression_1000_deinit);
 

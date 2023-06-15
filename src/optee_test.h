@@ -3,6 +3,7 @@
 
 #include <tee_client_api.h>
 #include <zephyr/kernel.h>
+#include <zephyr/ztest.h>
 
 /* UUIDs */
 #include <enc_fs_key_manager_test.h>
