@@ -9,7 +9,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-//#include <sys/queue.h>
 
 #define ADBG_STRING_LENGTH_MAX (1024)
 
@@ -82,6 +81,7 @@ struct ADBG_Case {
 #define ADBG_STRUCT_DECLARE(test_name)                 \
 	struct ADBG_Case c = {                         \
 		.name = test_name,                     \
+		.success = true,                       \
 	};                                             \
 	printk("--== %s ==--\n", c.name)
 

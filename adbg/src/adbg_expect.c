@@ -224,7 +224,8 @@ static bool ADBG_AssertHelper(
 	const bool ExpressionOK
 	)
 {
-	c->success = ExpressionOK;
+	if (!ExpressionOK)
+		c->success = false;
 	return ExpressionOK;
 }
 
