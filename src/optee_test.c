@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdarg.h>
 #include <zephyr/kernel.h>
 #include <zephyr/ztest.h>
 #include <tee_client_api.h>
@@ -43,14 +44,34 @@ void EndTest(const char *msg)
 	printk("End Test -- %s\n", msg);
 }
 
-void BeginSubCase(const char *msg)
+void BeginSubCase(const char *format, ...)
 {
-	printk("Begin subcase -- %s\n", msg);
+	va_list ArgList;
+	char Title[80] = { };
+
+	if (format == NULL) {
+		strcpy(Title, "NULL");
+	} else {
+		va_start(ArgList, format);
+		vsnprintf(Title, sizeof(Title), format, ArgList);
+		va_end(ArgList);
+	}
+	printk("Begin subcase -- %s\n", Title);
 }
 
-void EndSubCase(const char *msg)
+void EndSubCase(const char *format, ...)
 {
-	printk("End subcase -- %s\n", msg);
+	va_list ArgList;
+	char Title[80] = { };
+
+	if (format == NULL) {
+		strcpy(Title, "NULL");
+	} else {
+		va_start(ArgList, format);
+		vsnprintf(Title, sizeof(Title), format, ArgList);
+		va_end(ArgList);
+	}
+	printk("End subcase -- %s\n", Title);
 }
 
 
