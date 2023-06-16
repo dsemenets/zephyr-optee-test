@@ -48,44 +48,6 @@ struct xtest_crypto_session {
 	uint32_t cmd_id_aes256ecb_decrypt;
 };
 
-
-static bool optee_pager_with_small_pool(void)
-{
-	TEEC_Result res = TEEC_ERROR_GENERIC;
-	TEEC_UUID uuid = STATS_UUID;
-	TEEC_Context ctx = { };
-	TEEC_Session sess = { };
-	TEEC_Operation op = { };
-	uint32_t eo = 0;
-	bool rc = false;
-
-	res = TEEC_InitializeContext(NULL, &ctx);
-	if (res)
-		return false;
-
-	res = TEEC_OpenSession(&ctx, &sess, &uuid, TEEC_LOGIN_PUBLIC, NULL,
-			       NULL, &eo);
-	if (res)
-		goto out_ctx;
-
-	op.paramTypes = TEEC_PARAM_TYPES(TEEC_VALUE_OUTPUT, TEEC_VALUE_OUTPUT,
-					 TEEC_VALUE_OUTPUT, TEEC_NONE);
-	res = TEEC_InvokeCommand(&sess, STATS_CMD_PAGER_STATS, &op, &eo);
-	if (res)
-		goto out_sess;
-
-	if (op.params[0].value.b &&
-	    op.params[0].value.b <= PAGER_PAGE_COUNT_THRESHOLD)
-		rc = true;
-
-out_sess:
-	TEEC_CloseSession(&sess);
-out_ctx:
-	TEEC_FinalizeContext(&ctx);
-
-	return rc;
-}
-
 static void xtest_crypto_test(struct xtest_crypto_session *cs)
 {
 	uint32_t ret_orig = 0;
@@ -1049,10 +1011,6 @@ static void xtest_tee_test_1013_single(struct ADBG_Case *c, double *mean_concurr
 	uint8_t out[32] = { };
 	bool skip = false;
 
-	/* Decrease number of loops when pager has a small page pool */
-	if (level == 0 && optee_pager_with_small_pool())
-		repeat = 250;
-
 	BeginSubCase("Busy loop repeat %zu", repeat * 10);
 	*mean_concurrency = 0;
 
@@ -1183,6 +1141,543 @@ ZTEST(regression_1000, test_1013)
 	printk("    Number of parallel threads: %d\n", NUM_THREADS);
 	printk("    Mean concurrency: %g\n", mean_concurrency);
 	EndSubCase("Using large concurrency TA");
+	ADBG_Assert(&c);
+}
+
+ZTEST(regression_1000, test_1016)
+{
+	TEEC_Session session = { };
+	TEEC_Operation op = TEEC_OPERATION_INITIALIZER;
+	uint32_t ret_orig = 0;
+	ADBG_STRUCT_DECLARE("Test TA to TA transfers (in/out/inout memrefs on the stack)");
+
+	if (!ADBG_EXPECT_TEEC_SUCCESS(&c,
+			xtest_teec_open_session(&session, &os_test_ta_uuid, NULL, &ret_orig))) {
+		ADBG_Assert(&c);
+		return;
+	}
+
+	op.paramTypes = TEEC_PARAM_TYPES(TEEC_NONE, TEEC_NONE, TEEC_NONE,
+					 TEEC_NONE);
+
+	(void)ADBG_EXPECT_TEEC_SUCCESS(&c,
+		TEEC_InvokeCommand(&session, TA_OS_TEST_CMD_TA2TA_MEMREF, &op, &ret_orig));
+
+	TEEC_CloseSession(&session);
+	ADBG_Assert(&c);
+}
+
+ZTEST(regression_1000, test_1017)
+{
+	TEEC_Session session = { };
+	TEEC_Operation op = TEEC_OPERATION_INITIALIZER;
+	uint32_t ret_orig = 0;
+	TEEC_SharedMemory shm = { };
+	size_t page_size = 4096;
+	ADBG_STRUCT_DECLARE("Test coalescing memrefs");
+
+	shm.size = 8 * page_size;
+	shm.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
+	if (!ADBG_EXPECT_TEEC_SUCCESS(&c,
+		TEEC_AllocateSharedMemory(&xtest_teec_ctx, &shm)))
+		return;
+
+	if (!ADBG_EXPECT_TEEC_SUCCESS(&c,
+			xtest_teec_open_session(&session, &os_test_ta_uuid, NULL, &ret_orig))) {
+		ADBG_Assert(&c);
+		goto out;
+	}
+
+	op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_PARTIAL_INPUT,
+					 TEEC_MEMREF_PARTIAL_INPUT,
+					 TEEC_MEMREF_PARTIAL_OUTPUT,
+					 TEEC_MEMREF_PARTIAL_OUTPUT);
+
+	/*
+	 * The first two memrefs are supposed to be combined into in
+	 * region and the last two memrefs should have one region each
+	 * when the parameters are mapped for the TA.
+	 */
+	op.params[0].memref.parent = &shm;
+	op.params[0].memref.size = page_size;
+	op.params[0].memref.offset = 0;
+
+	op.params[1].memref.parent = &shm;
+	op.params[1].memref.size = page_size;
+	op.params[1].memref.offset = page_size;
+
+	op.params[2].memref.parent = &shm;
+	op.params[2].memref.size = page_size;
+	op.params[2].memref.offset = 4 * page_size;
+
+	op.params[3].memref.parent = &shm;
+	op.params[3].memref.size = 2 * page_size;
+	op.params[3].memref.offset = 6 * page_size;
+
+	(void)ADBG_EXPECT_TEEC_SUCCESS(&c,
+		TEEC_InvokeCommand(&session, TA_OS_TEST_CMD_PARAMS, &op, &ret_orig));
+
+	TEEC_CloseSession(&session);
+out:
+	TEEC_ReleaseSharedMemory(&shm);
+	ADBG_Assert(&c);
+}
+
+static void invoke_1byte_out_of_bounds(struct ADBG_Case *c, TEEC_Session *session,
+				       TEEC_SharedMemory *shm)
+{
+	TEEC_Operation op = TEEC_OPERATION_INITIALIZER;
+	TEEC_Result ret = TEEC_ERROR_GENERIC;
+	uint32_t ret_orig = 0;
+
+	op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_PARTIAL_INPUT,
+					 TEEC_NONE, TEEC_NONE, TEEC_NONE);
+
+	op.params[0].memref.parent = shm;
+	op.params[0].memref.size = shm->size / 2;
+	op.params[0].memref.offset = shm->size - (shm->size / 2) + 1;
+
+	ret = TEEC_InvokeCommand(session, TA_OS_TEST_CMD_PARAMS,
+				 &op, &ret_orig);
+
+	ADBG_EXPECT_COMPARE_UNSIGNED(c, ret_orig, !=, TEEC_ORIGIN_TRUSTED_APP);
+	if (ret != TEEC_ERROR_BAD_PARAMETERS && ret != TEEC_ERROR_GENERIC) {
+		ADBG_EXPECT(c, TEEC_ERROR_BAD_PARAMETERS, ret);
+		ADBG_EXPECT(c, TEEC_ERROR_GENERIC, ret);
+	}
+}
+
+ZTEST(regression_1000, test_1018)
+{
+	TEEC_Session session = { };
+	TEEC_Operation op = TEEC_OPERATION_INITIALIZER;
+	uint32_t ret_orig = 0;
+	TEEC_SharedMemory shm = { };
+	TEEC_Result ret = TEEC_ERROR_GENERIC;
+	size_t page_size = 4096;
+	/* Intentionally not 4kB aligned and odd */
+	uint8_t buffer[6001] = { };
+	ADBG_STRUCT_DECLARE("Test memref out of bounds");
+
+	if (!ADBG_EXPECT_TEEC_SUCCESS(&c,
+				      xtest_teec_open_session(&session,
+							      &os_test_ta_uuid,
+							      NULL,
+							      &ret_orig))) {
+		ADBG_Assert(&c);
+		return;
+	}
+
+	BeginSubCase("Out of bounds > 4kB on allocated shm");
+
+	shm.size = 8 * page_size;
+	shm.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
+	if (!ADBG_EXPECT_TEEC_SUCCESS(&c,
+				      TEEC_AllocateSharedMemory(&xtest_teec_ctx,
+								&shm)))
+		goto out;
+
+	op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_PARTIAL_INPUT,
+					 TEEC_MEMREF_PARTIAL_INPUT,
+					 TEEC_MEMREF_PARTIAL_OUTPUT,
+					 TEEC_MEMREF_PARTIAL_OUTPUT);
+
+	/*
+	 * The first two memrefs are supposed to be combined into in
+	 * region and the last two memrefs should have one region each
+	 * when the parameters are mapped for the TA.
+	 */
+	op.params[0].memref.parent = &shm;
+	op.params[0].memref.size = page_size;
+	op.params[0].memref.offset = 0;
+
+	op.params[1].memref.parent = &shm;
+	op.params[1].memref.size = page_size;
+	op.params[1].memref.offset = page_size;
+
+	op.params[2].memref.parent = &shm;
+	op.params[2].memref.size = page_size;
+	op.params[2].memref.offset = 4 * page_size;
+
+	op.params[3].memref.parent = &shm;
+	op.params[3].memref.size = 3 * page_size;
+	op.params[3].memref.offset = 6 * page_size;
+
+	ret = TEEC_InvokeCommand(&session, TA_OS_TEST_CMD_PARAMS, &op,
+				 &ret_orig);
+
+	ADBG_EXPECT_COMPARE_UNSIGNED(&c, ret_orig, !=, TEEC_ORIGIN_TRUSTED_APP);
+	if (ret != TEEC_ERROR_BAD_PARAMETERS && ret != TEEC_ERROR_GENERIC) {
+		ADBG_EXPECT(&c, TEEC_ERROR_BAD_PARAMETERS, ret);
+		ADBG_EXPECT(&c, TEEC_ERROR_GENERIC, ret);
+	}
+
+	TEEC_ReleaseSharedMemory(&shm);
+	EndSubCase(NULL);
+
+	BeginSubCase("Out of bounds by 1 byte on registered shm");
+
+	memset(&shm, 0, sizeof(shm));
+	shm.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
+	shm.buffer = buffer;
+	shm.size = sizeof(buffer);
+
+	if (!ADBG_EXPECT_TEEC_SUCCESS(&c,
+				      TEEC_RegisterSharedMemory(&xtest_teec_ctx,
+								&shm)))
+		goto out;
+
+	invoke_1byte_out_of_bounds(&c, &session, &shm);
+
+	TEEC_ReleaseSharedMemory(&shm);
+	EndSubCase(NULL);
+
+	BeginSubCase("Out of bounds by 1 byte ref on allocated shm");
+
+	memset(&shm, 0, sizeof(shm));
+	shm.size = sizeof(buffer);
+	shm.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
+	if (!ADBG_EXPECT_TEEC_SUCCESS(&c,
+				      TEEC_AllocateSharedMemory(&xtest_teec_ctx,
+								&shm)))
+		goto out;
+
+	invoke_1byte_out_of_bounds(&c, &session, &shm);
+
+	TEEC_ReleaseSharedMemory(&shm);
+	EndSubCase(NULL);
+
+out:
+	TEEC_CloseSession(&session);
+	ADBG_Assert(&c);
+}
+
+ZTEST(regression_1000, test_1019)
+{
+	TEEC_Session session = { };
+	uint32_t ret_orig = 0;
+	ADBG_STRUCT_DECLARE("Test dynamically linked TA");
+
+	if (!ADBG_EXPECT_TEEC_SUCCESS(&c,
+			xtest_teec_open_session(&session, &os_test_ta_uuid, NULL, &ret_orig))) {
+		ADBG_Assert(&c);
+		return;
+	}
+
+	(void)ADBG_EXPECT_TEEC_SUCCESS(&c,
+		TEEC_InvokeCommand(&session, TA_OS_TEST_CMD_CALL_LIB, NULL, &ret_orig));
+
+	(void)ADBG_EXPECT_TEEC_RESULT(&c,
+		TEEC_ERROR_TARGET_DEAD,
+		TEEC_InvokeCommand(&session, TA_OS_TEST_CMD_CALL_LIB_PANIC,
+				   NULL, &ret_orig));
+
+	(void)ADBG_EXPECT_TEEC_ERROR_ORIGIN(&c, TEEC_ORIGIN_TEE, ret_orig);
+
+	TEEC_CloseSession(&session);
+	ADBG_Assert(&c);
+}
+
+ZTEST(regression_1000, test_1020)
+{
+	TEEC_Result res = TEEC_ERROR_GENERIC;
+	TEEC_Session session = { };
+	uint32_t ret_orig = 0;
+	ADBG_STRUCT_DECLARE("Test lockdep algorithm");
+
+	/* Pseudo TA is optional: warn and nicely exit if not found */
+	res = xtest_teec_open_session(&session, &pta_invoke_tests_ta_uuid, NULL, &ret_orig);
+	if (res == TEEC_ERROR_ITEM_NOT_FOUND) {
+		printk(" - 1020 -   skip test, pseudo TA not found\n");
+		ADBG_Assert(&c);
+		return;
+	}
+	ADBG_EXPECT_TEEC_SUCCESS(&c, res);
+
+	res = TEEC_InvokeCommand(&session, PTA_INVOKE_TESTS_CMD_LOCKDEP,
+				 NULL, &ret_orig);
+	if (res != TEEC_SUCCESS) {
+		(void)ADBG_EXPECT_TEEC_ERROR_ORIGIN(&c, TEEC_ORIGIN_TRUSTED_APP,
+						    ret_orig);
+		if (res == TEEC_ERROR_NOT_SUPPORTED) {
+			printk(" - 1020 -   skip test, feature not implemented\n");
+			goto out;
+		}
+		/* Error */
+		(void)ADBG_EXPECT_TEEC_SUCCESS(&c, res);
+	}
+out:
+	TEEC_CloseSession(&session);
+	ADBG_Assert(&c);
+}
+
+static TEEC_Result open_sec_session(TEEC_Session *session,
+				    const TEEC_UUID *uuid)
+{
+	TEEC_Result res = TEEC_ERROR_GENERIC;
+	TEEC_Operation op = TEEC_OPERATION_INITIALIZER;
+	uint32_t ret_orig = 0;
+
+	op.params[0].tmpref.buffer = (void *)uuid;
+	op.params[0].tmpref.size = sizeof(*uuid);
+	op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_INPUT,
+					 TEEC_NONE, TEEC_NONE, TEEC_NONE);
+
+	res = TEEC_InvokeCommand(session, TA_SIMS_OPEN_TA_SESSION,
+				 &op, &ret_orig);
+	if (res != TEEC_SUCCESS)
+		return TEEC_ERROR_GENERIC;
+
+	return res;
+}
+
+static TEEC_Result sims_get_counter(TEEC_Session *session,
+				    uint32_t *counter)
+{
+	TEEC_Result res = TEEC_ERROR_GENERIC;
+	TEEC_Operation op = TEEC_OPERATION_INITIALIZER;
+	uint32_t ret_orig = 0;
+
+	op.paramTypes = TEEC_PARAM_TYPES(TEEC_VALUE_OUTPUT,
+					 TEEC_NONE, TEEC_NONE, TEEC_NONE);
+
+	res = TEEC_InvokeCommand(session, TA_SIMS_CMD_GET_COUNTER,
+				 &op, &ret_orig);
+	if (res == TEEC_SUCCESS)
+		*counter = op.params[0].value.a;
+
+	return res;
+}
+
+static TEEC_Result trigger_panic(TEEC_Session *session,
+				 const TEEC_UUID *uuid)
+{
+	TEEC_Operation op = TEEC_OPERATION_INITIALIZER;
+	uint32_t ret_orig = 0;
+
+	if (!uuid) {
+		op.params[0].tmpref.buffer = NULL;
+		op.params[0].tmpref.size = 0;
+	} else {
+		op.params[0].tmpref.buffer = (void *)uuid;
+		op.params[0].tmpref.size = sizeof(*uuid);
+	}
+	op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_INPUT,
+					 TEEC_NONE, TEEC_NONE, TEEC_NONE);
+
+	return TEEC_InvokeCommand(session, TA_SIMS_CMD_PANIC,
+				  &op, &ret_orig);
+}
+
+static void test_panic_ca_to_ta(struct ADBG_Case *c, const TEEC_UUID *uuid,
+				bool multi_instance)
+{
+	TEEC_Result exp_res = TEEC_ERROR_GENERIC;
+	uint32_t counter = 0;
+	uint32_t ret_orig = 0;
+	uint32_t exp_counter = 0;
+	TEEC_Session cs[3] = { };
+
+	if (!ADBG_EXPECT_TEEC_SUCCESS(c,
+			xtest_teec_open_session(&cs[0], uuid, NULL,
+						&ret_orig)))
+		return;
+
+	if (!ADBG_EXPECT_TEEC_SUCCESS(c,
+			xtest_teec_open_session(&cs[1], uuid, NULL,
+						&ret_orig)))
+		goto bail0;
+
+	if (!ADBG_EXPECT_TEEC_SUCCESS(c, sims_get_counter(&cs[0], &counter)))
+		goto bail1;
+
+	if (!ADBG_EXPECT(c, 0, counter))
+		goto bail1;
+
+	if (!ADBG_EXPECT_TEEC_SUCCESS(c, sims_get_counter(&cs[1], &counter)))
+		goto bail1;
+
+	exp_counter = multi_instance ? 0 : 1;
+	if (!ADBG_EXPECT(c, exp_counter, counter))
+		goto bail1;
+
+	if (!ADBG_EXPECT_TEEC_RESULT(c, TEEC_ERROR_TARGET_DEAD,
+				     trigger_panic(&cs[1], NULL)))
+		goto bail1;
+
+	exp_res = multi_instance ? TEEC_SUCCESS : TEEC_ERROR_TARGET_DEAD;
+	if (!ADBG_EXPECT_TEEC_RESULT(c, exp_res,
+				     sims_get_counter(&cs[0], &counter)))
+		goto bail1;
+
+	if (!ADBG_EXPECT_TEEC_RESULT(c, TEEC_ERROR_TARGET_DEAD,
+				     sims_get_counter(&cs[1], &counter)))
+		goto bail1;
+
+	/* Attempt to open a session on panicked context */
+	if (!ADBG_EXPECT_TEEC_SUCCESS(c,
+			xtest_teec_open_session(&cs[1], uuid, NULL,
+						&ret_orig)))
+		goto bail1;
+
+	/* Sanity check of still valid TA context */
+	if (!ADBG_EXPECT_TEEC_SUCCESS(c,
+			xtest_teec_open_session(&cs[2], uuid, NULL,
+						&ret_orig)))
+		goto bail1;
+
+	/* Sanity check of still valid TA context */
+	if (multi_instance) {
+		if (!ADBG_EXPECT_TEEC_SUCCESS(c,
+				sims_get_counter(&cs[0], &counter)))
+			goto bail2;
+
+		if (!ADBG_EXPECT(c, 0, counter))
+			goto bail2;
+	}
+
+	if (!ADBG_EXPECT_TEEC_SUCCESS(c, sims_get_counter(&cs[2], &counter)))
+		goto bail2;
+
+	exp_counter = multi_instance ? 0 : 1;
+	if (!ADBG_EXPECT(c, exp_counter, counter))
+		goto bail2;
+
+bail2:
+	TEEC_CloseSession(&cs[2]);
+bail1:
+	TEEC_CloseSession(&cs[1]);
+bail0:
+	TEEC_CloseSession(&cs[0]);
+}
+
+static void test_panic_ta_to_ta(struct ADBG_Case *c, const TEEC_UUID *uuid1,
+				const TEEC_UUID *uuid2)
+{
+	uint32_t ret_orig = 0;
+	uint32_t counter = 0;
+	TEEC_Session cs[3] = { };
+
+	/* Test pre-conditions */
+	/* 2.1 - CA opens a session toward TA1 */
+	if (!ADBG_EXPECT_TEEC_SUCCESS(c,
+			xtest_teec_open_session(&cs[0], uuid1, NULL,
+						&ret_orig)))
+		return;
+
+	/* 2.2 - CA opens a session toward TA2 */
+	if (!ADBG_EXPECT_TEEC_SUCCESS(c,
+			xtest_teec_open_session(&cs[1], uuid2, NULL,
+						&ret_orig)))
+		goto bail0;
+
+	/* 2.3 - TA1 opens a session toward TA2 */
+	if (!ADBG_EXPECT_TEEC_SUCCESS(c, open_sec_session(&cs[0], uuid2)))
+		goto bail1;
+
+	/* 2.4 - CA invokes TA2 which panics */
+	if (!ADBG_EXPECT_TEEC_RESULT(c, TEEC_ERROR_TARGET_DEAD,
+				     trigger_panic(&cs[1], NULL)))
+		goto bail1;
+
+	/* Expected results */
+	/* 2.5 - Expect CA->TA1 session is still alive */
+	if (!ADBG_EXPECT_TEEC_SUCCESS(c, sims_get_counter(&cs[0], &counter)))
+		goto bail1;
+
+	/* 2.6 - Expect CA->TA2 session is properly released */
+	if (!ADBG_EXPECT_TEEC_RESULT(c, TEEC_ERROR_TARGET_DEAD,
+				     sims_get_counter(&cs[1], &counter)))
+		goto bail1;
+
+bail1:
+	TEEC_CloseSession(&cs[1]);
+bail0:
+	TEEC_CloseSession(&cs[0]);
+
+	memset(cs, 0, sizeof(cs));
+
+	/* Test pre-conditions */
+	/* 2.1 - CA opens a session toward TA1 */
+	if (!ADBG_EXPECT_TEEC_SUCCESS(c,
+			xtest_teec_open_session(&cs[0], uuid1, NULL,
+						&ret_orig)))
+		return;
+
+	/* 2.2 - CA opens a session toward TA2 */
+	if (!ADBG_EXPECT_TEEC_SUCCESS(c,
+			xtest_teec_open_session(&cs[1], uuid2, NULL,
+						&ret_orig)))
+		goto bail2;
+
+	/* 2.3 - TA1 opens a session toward TA2 */
+	if (!ADBG_EXPECT_TEEC_SUCCESS(c, open_sec_session(&cs[0], uuid2)))
+		goto bail3;
+
+	/* 2.4 - CA invokes TA1 which invokes TA2 which panics */
+	if (!ADBG_EXPECT_TEEC_SUCCESS(c, trigger_panic(&cs[0], uuid2)))
+		goto bail3;
+
+	/* Expected results */
+	/* 2.5 - Expect CA->TA1 session is still alive */
+	if (!ADBG_EXPECT_TEEC_SUCCESS(c, sims_get_counter(&cs[0], &counter)))
+		goto bail3;
+
+	/* 2.6 - Expect CA->TA2 session is properly released */
+	if (!ADBG_EXPECT_TEEC_RESULT(c, TEEC_ERROR_TARGET_DEAD,
+				     sims_get_counter(&cs[1], &counter)))
+		goto bail3;
+
+bail3:
+	TEEC_CloseSession(&cs[1]);
+bail2:
+	TEEC_CloseSession(&cs[0]);
+}
+
+ZTEST(regression_1000, test_1021)
+{
+	ADBG_STRUCT_DECLARE("Test panic context release");
+
+	BeginSubCase("Multiple Instances Single Session");
+	test_panic_ca_to_ta(&c, &miss_test_ta_uuid, true);
+	EndSubCase("Multiple Instances Single Session");
+
+	BeginSubCase("Single Instance Multi Sessions");
+	test_panic_ca_to_ta(&c, &sims_test_ta_uuid, false);
+	EndSubCase("Single Instance Multi Sessions");
+
+	BeginSubCase("Single Instance Multi Sessions Keep Alive");
+	test_panic_ca_to_ta(&c, &sims_keepalive_test_ta_uuid, false);
+	EndSubCase("Single Instance Multi Sessions Keep Alive");
+
+	BeginSubCase("Multi Sessions TA to TA");
+	test_panic_ta_to_ta(&c, &sims_test_ta_uuid, &sims_keepalive_test_ta_uuid);
+	EndSubCase("Multi Sessions TA to TA");
+	ADBG_Assert(&c);
+}
+
+ZTEST(regression_1000, test_1022)
+{
+	TEEC_Session session = { 0 };
+	uint32_t ret_orig = 0;
+	ADBG_STRUCT_DECLARE("Test dlopen()/dlsym()/dlclose() API");
+
+	if (!ADBG_EXPECT_TEEC_SUCCESS(&c,
+			xtest_teec_open_session(&session, &os_test_ta_uuid, NULL, &ret_orig))) {
+		ADBG_Assert(&c);
+		return;
+	}
+
+	(void)ADBG_EXPECT_TEEC_SUCCESS(&c,
+		TEEC_InvokeCommand(&session, TA_OS_TEST_CMD_CALL_LIB_DL, NULL, &ret_orig));
+
+	(void)ADBG_EXPECT_TEEC_RESULT(&c,
+		TEEC_ERROR_TARGET_DEAD,
+		TEEC_InvokeCommand(&session, TA_OS_TEST_CMD_CALL_LIB_DL_PANIC, NULL, &ret_orig));
+
+	(void)ADBG_EXPECT_TEEC_ERROR_ORIGIN(&c, TEEC_ORIGIN_TEE, ret_orig);
+
+	TEEC_CloseSession(&session);
 	ADBG_Assert(&c);
 }
 
