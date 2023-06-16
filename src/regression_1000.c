@@ -20,7 +20,11 @@
 
 #define PAGER_PAGE_COUNT_THRESHOLD	((128 * 1024) / 4096)
 
+#define UNUSED __attribute__ ((unused))
+
 extern TEEC_Context xtest_teec_ctx;
+
+static int level = 0;
 
 void *regression_1000_init(void)
 {
@@ -355,8 +359,7 @@ struct test_1003_arg {
 	uint32_t error_orig;
 };
 
-static void test_1003_thread(void *arg1, __attribute__ ((unused)) void *arg2,
-			      __attribute__ ((unused)) void *arg3)
+static void test_1003_thread(void *arg1, UNUSED void *arg2, UNUSED void *arg3)
 {
 	struct test_1003_arg *a = (struct test_1003_arg *)arg1;
 	TEEC_Session session = { };
@@ -454,7 +457,7 @@ ZTEST(regression_1000, test_1003)
 		tid = k_thread_create(thr+n, thread_stack[n], STACKSIZE, test_1003_thread,
 				      arg+n, NULL, NULL, K_PRIO_PREEMPT(0), K_USER, K_NO_WAIT);
 		if (!ADBG_EXPECT_NOT(&c, 0, (long)tid))
-			nt = n; /* break loop and start cleanup */
+			break;
 	}
 
 	for (n = 0; n < nt; n++) {
@@ -592,5 +595,595 @@ ZTEST(regression_1000, test_1007)
 	ADBG_Assert(&c);
 }
 
-ZTEST_SUITE(regression_1000, NULL, regression_1000_init, NULL, NULL, regression_1000_deinit);
+ZTEST(regression_1000, test_1008)
+{
+	TEEC_Session session = { };
+	TEEC_Session session_crypt = { };
+	uint32_t ret_orig = 0;
+	ADBG_STRUCT_DECLARE("TEE internal client API");
 
+	BeginSubCase("Invoke command");
+	{
+		if (ADBG_EXPECT_TEEC_SUCCESS(&c,
+			xtest_teec_open_session(&session, &os_test_ta_uuid,
+			                        NULL, &ret_orig))) {
+
+			(void)ADBG_EXPECT_TEEC_SUCCESS(&c,
+			    TEEC_InvokeCommand(&session, TA_OS_TEST_CMD_CLIENT,
+			                       NULL, &ret_orig));
+			TEEC_CloseSession(&session);
+		}
+
+	}
+	EndSubCase("Invoke command");
+
+	BeginSubCase("Invoke command with timeout");
+	{
+		TEEC_Operation op = TEEC_OPERATION_INITIALIZER;
+
+		op.params[0].value.a = 2000;
+		op.paramTypes = TEEC_PARAM_TYPES(
+			TEEC_VALUE_INPUT, TEEC_NONE, TEEC_NONE, TEEC_NONE);
+
+		if (ADBG_EXPECT_TEEC_SUCCESS(&c, xtest_teec_open_session(&session,
+					     &os_test_ta_uuid, NULL, &ret_orig))) {
+			(void)ADBG_EXPECT_TEEC_SUCCESS(&c,
+			  TEEC_InvokeCommand(&session,
+			                     TA_OS_TEST_CMD_CLIENT_WITH_TIMEOUT,
+			                     &op, &ret_orig));
+			TEEC_CloseSession(&session);
+		}
+	}
+	EndSubCase("Invoke command with timeout");
+
+	BeginSubCase("Create session fail");
+	{
+		size_t n = 0;
+
+		for (n = 0; n < 100; n++) {
+			printk("n = %zu\n", n);
+			(void)ADBG_EXPECT_TEEC_RESULT(&c, TEEC_ERROR_GENERIC,
+				xtest_teec_open_session(&session_crypt,
+					&create_fail_test_ta_uuid, NULL, &ret_orig));
+			/* level > 0 may be used to detect/debug memory leaks */
+			if (!level)
+				break;
+		}
+	}
+	EndSubCase("Create session fail");
+
+	BeginSubCase("Load corrupt TA");
+	printk("=============  Skipped =============\n");
+//	test_1008_corrupt_ta(c);
+	EndSubCase("Load corrupt TA");
+	ADBG_Assert(&c);
+}
+
+static void cancellation_thread(void *arg1, UNUSED void *arg2, UNUSED void *arg3)
+{
+	/*
+	 * Sleep 0.5 seconds before cancellation to make sure that the other
+	 * thread is in RPC_WAIT.
+	 */
+	k_msleep(500);
+	TEEC_RequestCancellation(arg1);
+	return;
+}
+
+static void xtest_tee_test_1009_subcase(struct ADBG_Case *c, const char *subcase,
+					uint32_t timeout, bool cancel)
+{
+	TEEC_Session session = { };
+	uint32_t ret_orig = 0;
+	static struct k_thread thr;
+	k_tid_t tid;
+	TEEC_Result res = TEEC_ERROR_GENERIC;
+
+	memset(&thr, 0, sizeof(thr));
+
+	BeginSubCase("%s", subcase);
+	TEEC_Operation op = TEEC_OPERATION_INITIALIZER;
+
+	if (ADBG_EXPECT_TEEC_SUCCESS(c,
+			xtest_teec_open_session(&session, &os_test_ta_uuid, NULL, &ret_orig))) {
+
+		(void)ADBG_EXPECT_TEEC_ERROR_ORIGIN(c, TEEC_ORIGIN_TRUSTED_APP, ret_orig);
+
+		op.params[0].value.a = timeout;
+		op.paramTypes = TEEC_PARAM_TYPES(TEEC_VALUE_INPUT,
+				TEEC_NONE, TEEC_NONE, TEEC_NONE);
+		if (cancel) {
+			tid = k_thread_create(&thr, *thread_stack, STACKSIZE,
+					cancellation_thread, &op, NULL, NULL,
+					K_PRIO_PREEMPT(0), K_USER, K_NO_WAIT);
+			if (ADBG_EXPECT_NOT(c, 0, (long)tid)) {
+				res = TEEC_InvokeCommand(&session, TA_OS_TEST_CMD_WAIT,
+						&op, &ret_orig);
+				(void)ADBG_EXPECT_TEEC_RESULT(c, TEEC_ERROR_CANCEL, res);
+			}
+		} else
+
+		res = TEEC_InvokeCommand(&session, TA_OS_TEST_CMD_WAIT, &op, &ret_orig);
+		(void)ADBG_EXPECT_TEEC_SUCCESS(c, res);
+		if (cancel)
+			ADBG_EXPECT(c, 0, k_thread_join(&thr, K_FOREVER));
+
+		TEEC_CloseSession(&session);
+		}
+	EndSubCase("%s", subcase);
+}
+
+ZTEST(regression_1000, test_1009)
+{
+	ADBG_STRUCT_DECLARE("TEE Wait");
+
+	xtest_tee_test_1009_subcase(&c, "TEE Wait 0.1s", 100, false);
+	xtest_tee_test_1009_subcase(&c, "TEE Wait 0.5s", 500, false);
+	xtest_tee_test_1009_subcase(&c, "TEE Wait 2s cancel", 2000, true);
+	xtest_tee_test_1009_subcase(&c, "TEE Wait 2s", 2000, false);
+	ADBG_Assert(&c);
+}
+
+static void xtest_tee_test_invalid_mem_access(struct ADBG_Case *c, unsigned int n)
+{
+	TEEC_Session session = { };
+	TEEC_Operation op = TEEC_OPERATION_INITIALIZER;
+	uint32_t ret_orig = 0;
+
+	if (!ADBG_EXPECT_TEEC_SUCCESS(c,
+		xtest_teec_open_session(&session, &os_test_ta_uuid, NULL,
+		                        &ret_orig)))
+		return;
+
+	op.params[0].value.a = n;
+	op.paramTypes = TEEC_PARAM_TYPES(TEEC_VALUE_INPUT, TEEC_NONE, TEEC_NONE,
+					 TEEC_NONE);
+
+	(void)ADBG_EXPECT_TEEC_RESULT(c,
+		TEEC_ERROR_TARGET_DEAD,
+		TEEC_InvokeCommand(&session, TA_OS_TEST_CMD_BAD_MEM_ACCESS, &op,
+				   &ret_orig));
+
+	(void)ADBG_EXPECT_TEEC_RESULT(c,
+	        TEEC_ERROR_TARGET_DEAD,
+	        TEEC_InvokeCommand(&session, TA_OS_TEST_CMD_BAD_MEM_ACCESS, &op,
+					&ret_orig));
+
+	(void)ADBG_EXPECT_TEEC_ERROR_ORIGIN(c, TEEC_ORIGIN_TEE, ret_orig);
+
+	TEEC_CloseSession(&session);
+}
+
+static void xtest_tee_test_invalid_mem_access2(struct ADBG_Case *c, unsigned int n,
+							       size_t size)
+{
+	TEEC_Session session = { };
+	TEEC_Operation op = TEEC_OPERATION_INITIALIZER;
+	uint32_t ret_orig = 0;
+	TEEC_SharedMemory shm = { };
+
+	shm.size = size;
+	shm.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
+	if (!ADBG_EXPECT_TEEC_SUCCESS(c,
+		TEEC_AllocateSharedMemory(&xtest_teec_ctx, &shm)))
+		return;
+
+	if (!ADBG_EXPECT_TEEC_SUCCESS(c,
+		xtest_teec_open_session(&session, &os_test_ta_uuid, NULL,
+		                        &ret_orig)))
+		goto rel_shm;
+
+	op.params[0].value.a = (uint32_t)n;
+	op.params[1].memref.parent = &shm;
+	op.params[1].memref.size = size;
+	op.paramTypes = TEEC_PARAM_TYPES(TEEC_VALUE_INPUT, TEEC_MEMREF_WHOLE,
+					 TEEC_NONE, TEEC_NONE);
+
+	(void)ADBG_EXPECT_TEEC_RESULT(c,
+		TEEC_ERROR_TARGET_DEAD,
+		TEEC_InvokeCommand(&session, TA_OS_TEST_CMD_BAD_MEM_ACCESS, &op,
+				   &ret_orig));
+
+	(void)ADBG_EXPECT_TEEC_RESULT(c,
+	        TEEC_ERROR_TARGET_DEAD,
+	        TEEC_InvokeCommand(&session, TA_OS_TEST_CMD_BAD_MEM_ACCESS, &op,
+					&ret_orig));
+
+	(void)ADBG_EXPECT_TEEC_ERROR_ORIGIN(c, TEEC_ORIGIN_TEE, ret_orig);
+
+	TEEC_CloseSession(&session);
+rel_shm:
+	TEEC_ReleaseSharedMemory(&shm);
+}
+
+ZTEST(regression_1000, test_1010)
+{
+	unsigned int n = 0;
+	unsigned int idx = 0;
+	size_t memref_sz[] = { 1024, 65536 };
+	ADBG_STRUCT_DECLARE("Invalid memory access");
+
+	for (n = 1; n <= 7; n++) {
+		BeginSubCase("Invalid memory access %u", n);
+		xtest_tee_test_invalid_mem_access(&c, n);
+		EndSubCase("Invalid memory access %u", n);
+	}
+
+	for (idx = 0; idx < ARRAY_SIZE(memref_sz); idx++) {
+		for (n = 1; n <= 5; n++) {
+			BeginSubCase("Invalid memory access %u with %zu bytes memref",
+				n, memref_sz[idx]);
+			xtest_tee_test_invalid_mem_access2(&c, n, memref_sz[idx]);
+			EndSubCase("Invalid memory access %u with %zu bytes memref",
+				n, memref_sz[idx]);
+		}
+	}
+	ADBG_Assert(&c);
+}
+
+ZTEST(regression_1000, test_1011)
+{
+	TEEC_Session session = { };
+	uint32_t ret_orig = 0;
+	ADBG_STRUCT_DECLARE("Test TA-to-TA features with User Crypt TA");
+	struct xtest_crypto_session cs = {
+		&c, &session, TA_RPC_CMD_CRYPT_SHA256,
+		TA_RPC_CMD_CRYPT_AES256ECB_ENC,
+		TA_RPC_CMD_CRYPT_AES256ECB_DEC
+	};
+	struct xtest_crypto_session cs_privmem = {
+		&c, &session,
+		TA_RPC_CMD_CRYPT_PRIVMEM_SHA256,
+		TA_RPC_CMD_CRYPT_PRIVMEM_AES256ECB_ENC,
+		TA_RPC_CMD_CRYPT_PRIVMEM_AES256ECB_DEC
+	};
+	TEEC_UUID uuid = rpc_test_ta_uuid;
+
+	if (!ADBG_EXPECT_TEEC_SUCCESS(&c,
+		xtest_teec_open_session(&session, &uuid, NULL, &ret_orig)))
+		return;
+
+	BeginSubCase("TA-to-TA via non-secure shared memory");
+	/*
+	 * Run the "complete crypto test suite" using TA-to-TA
+	 * communication
+	 */
+	xtest_crypto_test(&cs);
+	EndSubCase("TA-to-TA via non-secure shared memory");
+
+	BeginSubCase("TA-to-TA via TA private memory");
+	/*
+	 * Run the "complete crypto test suite" using TA-to-TA
+	 * communication via TA private memory.
+	 */
+	xtest_crypto_test(&cs_privmem);
+	EndSubCase("TA-to-TA via TA private memory");
+
+	TEEC_CloseSession(&session);
+	ADBG_Assert(&c);
+}
+
+/*
+ * Note that this test is failing when
+ * - running twice in a raw
+ * - and the user TA is statically linked
+ * This is because the counter is not reseted when opening the first session
+ * in case the TA is statically linked
+ */
+ZTEST(regression_1000, test_1012)
+{
+	TEEC_Session session1 = { };
+	TEEC_Session session2 = { };
+	uint32_t ret_orig = 0;
+	TEEC_UUID uuid = sims_test_ta_uuid;
+	ADBG_STRUCT_DECLARE("Test Single Instance Multi Session features with SIMS TA");
+
+	BeginSubCase("Single Instance Multi Session");
+	{
+		TEEC_Operation op = TEEC_OPERATION_INITIALIZER;
+		static const uint8_t in[] = {
+			0x5A, 0x6E, 0x04, 0x57, 0x08, 0xFB, 0x71, 0x96,
+			0xF0, 0x2E, 0x55, 0x3D, 0x02, 0xC3, 0xA6, 0x92,
+			0xE9, 0xC3, 0xEF, 0x8A, 0xB2, 0x34, 0x53, 0xE6,
+			0xF0, 0x74, 0x9C, 0xD6, 0x36, 0xE7, 0xA8, 0x8E
+		};
+		uint8_t out[32] = { };
+		int i = 0;
+
+		if (!ADBG_EXPECT_TEEC_SUCCESS(&c,
+			xtest_teec_open_session(&session1, &uuid, NULL,
+			                        &ret_orig)))
+			return;
+
+		op.params[0].value.a = 0;
+		op.params[1].tmpref.buffer = (void *)in;
+		op.params[1].tmpref.size = sizeof(in);
+		op.paramTypes = TEEC_PARAM_TYPES(TEEC_VALUE_INPUT,
+						 TEEC_MEMREF_TEMP_INPUT,
+						 TEEC_NONE, TEEC_NONE);
+
+		(void)ADBG_EXPECT_TEEC_SUCCESS(&c,
+			TEEC_InvokeCommand(&session1, TA_SIMS_CMD_WRITE, &op,
+					   &ret_orig));
+
+		for (i = 1; i < 3; i++) {
+			if (!ADBG_EXPECT_TEEC_SUCCESS(&c,
+				xtest_teec_open_session(&session2, &uuid, NULL,
+				                        &ret_orig)))
+				continue;
+
+			op.params[0].value.a = 0;
+			op.params[1].tmpref.buffer = out;
+			op.params[1].tmpref.size = sizeof(out);
+			op.paramTypes = TEEC_PARAM_TYPES(TEEC_VALUE_INPUT,
+						TEEC_MEMREF_TEMP_OUTPUT,
+						TEEC_NONE, TEEC_NONE);
+
+			(void)ADBG_EXPECT_TEEC_SUCCESS(&c,
+				TEEC_InvokeCommand(&session2, TA_SIMS_CMD_READ,
+						   &op, &ret_orig));
+
+			if (!ADBG_EXPECT_BUFFER(&c, in, sizeof(in), out,
+						sizeof(out))) {
+				printk("in:\n");
+				Do_ADBG_HexLog(in, sizeof(in), 16);
+				printk("out:\n");
+				Do_ADBG_HexLog(out, sizeof(out), 16);
+			}
+
+			op.paramTypes = TEEC_PARAM_TYPES(TEEC_VALUE_OUTPUT,
+							 TEEC_NONE, TEEC_NONE,
+							 TEEC_NONE);
+
+			(void)ADBG_EXPECT_TEEC_SUCCESS(&c,
+				TEEC_InvokeCommand(&session1,
+						   TA_SIMS_CMD_GET_COUNTER,
+						   &op, &ret_orig));
+
+			(void)ADBG_EXPECT(&c, 0, op.params[0].value.a);
+
+			(void)ADBG_EXPECT_TEEC_SUCCESS(&c,
+				TEEC_InvokeCommand(&session2,
+						   TA_SIMS_CMD_GET_COUNTER, &op,
+						   &ret_orig));
+
+			(void)ADBG_EXPECT(&c, i, op.params[0].value.a);
+			TEEC_CloseSession(&session2);
+		}
+
+		memset(out, 0, sizeof(out));
+		op.params[0].value.a = 0;
+		op.params[1].tmpref.buffer = out;
+		op.params[1].tmpref.size = sizeof(out);
+		op.paramTypes = TEEC_PARAM_TYPES(TEEC_VALUE_INPUT,
+						 TEEC_MEMREF_TEMP_OUTPUT,
+						 TEEC_NONE, TEEC_NONE);
+
+		(void)ADBG_EXPECT_TEEC_SUCCESS(&c,
+			TEEC_InvokeCommand(&session1, TA_SIMS_CMD_READ, &op,
+					   &ret_orig));
+
+		if (!ADBG_EXPECT(&c, 0, memcmp(in, out, sizeof(in)))) {
+			printk("in:\n");
+			Do_ADBG_HexLog(in, sizeof(in), 16);
+			printk("out:\n");
+			Do_ADBG_HexLog(out, sizeof(out), 16);
+		}
+
+		TEEC_CloseSession(&session1);
+	}
+	EndSubCase("Single Instance Multi Session");
+	ADBG_Assert(&c);
+}
+
+struct test_1013_thread_arg {
+	const TEEC_UUID *uuid;
+	uint32_t cmd;
+	uint32_t repeat;
+	TEEC_SharedMemory *shm;
+	uint32_t error_orig;
+	TEEC_Result res;
+	uint32_t max_concurrency;
+	const uint8_t *in;
+	size_t in_len;
+	uint8_t *out;
+	size_t out_len;
+};
+
+static void test_1013_thread(void *arg1, UNUSED void *arg2, UNUSED void *arg3)
+{
+	struct test_1013_thread_arg *a = arg1;
+	TEEC_Session session = { };
+	TEEC_Operation op = TEEC_OPERATION_INITIALIZER;
+	uint8_t p2 = TEEC_NONE;
+	uint8_t p3 = TEEC_NONE;
+
+	a->res = xtest_teec_open_session(&session, a->uuid, NULL,
+					 &a->error_orig);
+	if (a->res != TEEC_SUCCESS)
+		return;
+
+	op.params[0].memref.parent = a->shm;
+	op.params[0].memref.size = a->shm->size;
+	op.params[0].memref.offset = 0;
+	op.params[1].value.a = a->repeat;
+	op.params[1].value.b = 0;
+	op.params[2].tmpref.buffer = (void *)a->in;
+	op.params[2].tmpref.size = a->in_len;
+	op.params[3].tmpref.buffer = a->out;
+	op.params[3].tmpref.size = a->out_len;
+
+	if (a->in_len)
+		p2 = TEEC_MEMREF_TEMP_INPUT;
+	if (a->out_len)
+		p3 = TEEC_MEMREF_TEMP_OUTPUT;
+
+	op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_PARTIAL_INOUT,
+					 TEEC_VALUE_INOUT, p2, p3);
+
+	a->res = TEEC_InvokeCommand(&session, a->cmd, &op, &a->error_orig);
+	a->max_concurrency = op.params[1].value.b;
+	a->out_len = op.params[3].tmpref.size;
+	TEEC_CloseSession(&session);
+	return;
+}
+
+#define NUM_THREADS 3
+
+static void xtest_tee_test_1013_single(struct ADBG_Case *c, double *mean_concurrency,
+				       const TEEC_UUID *uuid)
+{
+	size_t nt = 0;
+	size_t n = 0;
+	size_t repeat = 1000;
+	TEEC_SharedMemory shm = { };
+	size_t max_concurrency = 0;
+	struct test_1013_thread_arg arg[NUM_THREADS] = { };
+	static const uint8_t sha256_in[] = { 'a', 'b', 'c' };
+	static const uint8_t sha256_out[] = {
+		0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea,
+		0x41, 0x41, 0x40, 0xde, 0x5d, 0xae, 0x22, 0x23,
+		0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c,
+		0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00, 0x15, 0xad
+	};
+	uint8_t out[32] = { };
+	bool skip = false;
+
+	/* Decrease number of loops when pager has a small page pool */
+	if (level == 0 && optee_pager_with_small_pool())
+		repeat = 250;
+
+	BeginSubCase("Busy loop repeat %zu", repeat * 10);
+	*mean_concurrency = 0;
+
+	shm.size = sizeof(struct ta_concurrent_shm);
+	shm.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
+	if (!ADBG_EXPECT_TEEC_SUCCESS(c,
+		TEEC_AllocateSharedMemory(&xtest_teec_ctx, &shm)))
+		return;
+
+	memset(shm.buffer, 0, shm.size);
+	max_concurrency = 0;
+	nt = NUM_THREADS;
+
+	for (n = 0; n < nt; n++) {
+		k_tid_t tid;
+		arg[n].uuid = uuid;
+		arg[n].cmd = TA_CONCURRENT_CMD_BUSY_LOOP;
+		arg[n].repeat = repeat * 10;
+		arg[n].shm = &shm;
+		tid = k_thread_create(thr+n, thread_stack[n], STACKSIZE, test_1013_thread,
+				      arg+n, NULL, NULL, K_PRIO_PREEMPT(0), K_USER, K_NO_WAIT);
+		if (!ADBG_EXPECT_NOT(c, 0, (long)tid))
+			break; /* break loop and start cleanup */
+	}
+
+	for (n = 0; n < nt; n++) {
+		ADBG_EXPECT(c, 0, k_thread_join(thr+n, K_FOREVER));
+		if (arg[n].res == TEEC_ERROR_OUT_OF_MEMORY &&
+		    !memcmp(uuid, &concurrent_large_ta_uuid, sizeof(*uuid))) {
+			printk("TEEC_ERROR_OUT_OF_MEMORY - ignored\n");
+			skip = true;
+			continue;
+		}
+		ADBG_EXPECT_TEEC_SUCCESS(c, arg[n].res);
+		if (arg[n].max_concurrency > max_concurrency)
+			max_concurrency = arg[n].max_concurrency;
+	}
+
+	/*
+	 * Concurrency can be limited by several factors, for instance in a
+	 * single CPU system it's dependent on the Preemption Model used by
+	 * the kernel (Preemptible Kernel (Low-Latency Desktop) gives the
+	 * best result there).
+	 */
+	if (!skip) {
+		(void)ADBG_EXPECT_COMPARE_UNSIGNED(c, max_concurrency, >, 0);
+		(void)ADBG_EXPECT_COMPARE_UNSIGNED(c, max_concurrency, <=,
+						   NUM_THREADS);
+		*mean_concurrency += max_concurrency;
+	}
+	EndSubCase("Busy loop repeat %zu", repeat * 10);
+
+	BeginSubCase("SHA-256 loop repeat %zu", repeat);
+	memset(shm.buffer, 0, shm.size);
+	memset(arg, 0, sizeof(arg));
+	max_concurrency = 0;
+	nt = NUM_THREADS;
+
+	for (n = 0; n < nt; n++) {
+		k_tid_t tid;
+		arg[n].uuid = uuid;
+		arg[n].cmd = TA_CONCURRENT_CMD_SHA256;
+		arg[n].repeat = repeat;
+		arg[n].shm = &shm;
+		arg[n].in = sha256_in;
+		arg[n].in_len = sizeof(sha256_in);
+		arg[n].out = out;
+		arg[n].out_len = sizeof(out);
+		tid = k_thread_create(thr+n, thread_stack[n], STACKSIZE, test_1013_thread,
+				      arg+n, NULL, NULL, K_PRIO_PREEMPT(0), K_USER, K_NO_WAIT);
+		if (!ADBG_EXPECT_NOT(c, 0, (long)tid))
+			break; /* break loop and start cleanup */
+	}
+
+	for (n = 0; n < nt; n++) {
+		ADBG_EXPECT(c, 0, k_thread_join(thr+n, K_FOREVER));
+		if (arg[n].res == TEEC_ERROR_OUT_OF_MEMORY &&
+		    !memcmp(uuid, &concurrent_large_ta_uuid, sizeof(*uuid))) {
+			printk("TEEC_ERROR_OUT_OF_MEMORY - ignored\n");
+			continue;
+		}
+		if (ADBG_EXPECT_TEEC_SUCCESS(c, arg[n].res))
+			ADBG_EXPECT_BUFFER(c, sha256_out, sizeof(sha256_out),
+					   arg[n].out, arg[n].out_len);
+		if (arg[n].max_concurrency > max_concurrency)
+			max_concurrency = arg[n].max_concurrency;
+	}
+	*mean_concurrency += max_concurrency;
+	EndSubCase("SHA-256 loop repeat %zu", repeat);
+
+	*mean_concurrency /= 2.0;
+	TEEC_ReleaseSharedMemory(&shm);
+}
+
+ZTEST(regression_1000, test_1013)
+{
+	int i = 0;
+	double mean_concurrency = 0;
+	double concurrency = 0;
+	int nb_loops = 24;
+	ADBG_STRUCT_DECLARE("Test concurrency with concurrent TA");
+
+	if (level == 0)
+		nb_loops /= 2;
+
+	BeginSubCase("Using small concurrency TA");
+	mean_concurrency = 0;
+	for (i = 0; i < nb_loops; i++) {
+		xtest_tee_test_1013_single(&c, &concurrency,
+					   &concurrent_ta_uuid);
+		mean_concurrency += concurrency;
+	}
+	mean_concurrency /= nb_loops;
+
+	printk("    Number of parallel threads: %d\n", NUM_THREADS);
+	printk("    Mean concurrency: %g\n", mean_concurrency);
+	EndSubCase("Using small concurrency TA");
+
+	BeginSubCase("Using large concurrency TA");
+	mean_concurrency = 0;
+	for (i = 0; i < nb_loops; i++) {
+		xtest_tee_test_1013_single(&c, &concurrency,
+					   &concurrent_large_ta_uuid);
+		mean_concurrency += concurrency;
+	}
+	mean_concurrency /= nb_loops;
+
+	printk("    Number of parallel threads: %d\n", NUM_THREADS);
+	printk("    Mean concurrency: %g\n", mean_concurrency);
+	EndSubCase("Using large concurrency TA");
+	ADBG_Assert(&c);
+}
+
+ZTEST_SUITE(regression_1000, NULL, regression_1000_init, NULL, NULL, regression_1000_deinit);
