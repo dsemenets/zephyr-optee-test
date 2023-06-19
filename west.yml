@@ -20,8 +20,8 @@ manifest:
 
   projects:
     - name: zephyr
-      remote: dsemenets
-      revision: optee
+      remote: amoi
+      revision: optee_upstr
       west-commands: scripts/west-commands.yml
 
     - name: zephyr-xenlib
