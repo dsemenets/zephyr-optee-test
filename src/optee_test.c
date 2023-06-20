@@ -34,6 +34,8 @@ TEEC_Context xtest_teec_ctx;
 
 char *xtest_tee_name = NULL;
 
+int level = 0;
+
 void BeginTest(const char *msg)
 {
 	printk("Begin Test -- %s\n", msg);
