@@ -38,9 +38,8 @@ const TEEC_UUID subkey2_ta_uuid = TA_SUBKEY2_UUID;
 
 TEEC_Context xtest_teec_ctx;
 
+unsigned int level = 0;
 char *xtest_tee_name = NULL;
-
-int level = 0;
 
 void BeginTest(const char *msg)
 {
