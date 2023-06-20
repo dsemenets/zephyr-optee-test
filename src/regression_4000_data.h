@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
+ * Copyright (c) 2023, Epam Systems
  * Copyright (c) 2014, STMicroelectronics International N.V.
  * Copyright (c) 2021, SumUp Services GmbH
  */
@@ -7,8 +8,8 @@
 #ifndef XTEST_4000_DATA_H
 #define XTEST_4000_DATA_H
 #include <stdint.h>
-#include <nist/186-3dsatestvectors.h>
-#include <nist/ecccdhtestvectors.h>
+#include "nist/186-3dsatestvectors.h"
+#include "nist/ecccdhtestvectors.h"
 
 /*
  * XTS-AES Test data from:
