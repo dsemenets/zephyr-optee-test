@@ -149,8 +149,7 @@ bool Do_ADBG_ExpectComparePointer(struct ADBG_Case *c, const char *const FileNam
  *
  * @param Format_p The formatting string as in printf
  */
-//void Do_ADBG_Log(const char *const Format_p, ...)
-//__attribute__((__format__(__printf__, 1, 2)));
+void Do_ADBG_Log(const char *const Format_p, ...);
 
 /**
  * Writes out the contents of buf_p formatted so that each line will

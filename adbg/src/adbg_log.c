@@ -19,6 +19,17 @@
  * @return void
  */
 /******************************************************************************/
+
+void Do_ADBG_Log(const char *const Format, ...)
+{
+	va_list ap;
+
+	va_start(ap, Format);
+	vprintk(Format, ap);
+	printk("\n");
+	va_end(ap);
+}
+
 void Do_ADBG_HexLog(
 	const void *const Buf_p,
 	const size_t Size,
