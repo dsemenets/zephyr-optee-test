@@ -24,20 +24,18 @@
 
 extern TEEC_Context xtest_teec_ctx;
 
-static int level = 0;
-
 void *regression_1000_init(void)
 {
-	printk("Begin Test suite 1000\n");
-        (void)TEEC_InitializeContext(NULL, &xtest_teec_ctx);
+	printk("Begin Test suite regression_1000\n");
+	(void)TEEC_InitializeContext(NULL, &xtest_teec_ctx);
 	return NULL;
 }
 
 void regression_1000_deinit(void *param)
 {
 	(void)param;
-	printk("End Test suite 1000\n");
-    TEEC_FinalizeContext(&xtest_teec_ctx);
+	printk("End Test suite regression_1000\n");
+	TEEC_FinalizeContext(&xtest_teec_ctx);
 }
 
 struct xtest_crypto_session {
