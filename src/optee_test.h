@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Copyright (c) 2014, STMicroelectronics International N.V.
+ * Copyright (c) 2023, EPAM Systems
+ */
+
 #ifndef __OPTEE_TEST_H
 #define __OPTEE_TEST_H
 

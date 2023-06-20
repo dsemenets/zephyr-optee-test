@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2014, STMicroelectronics International N.V.
+ * Copyright (c) 2023, EPAM Systems
  */
 
 /*************************************************************************
  * 1. Includes
  ************************************************************************/
-//#include "adbg_int.h"
 #include <adbg.h>
 #include <zephyr/kernel.h>
 #include <zephyr/ztest.h>
