@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Copyright (c) 2023, EPAM Systems
+ * Copyright (c) 2020, ARM Limited. All rights reserved.
+ * Copyright (c) 2014, STMicroelectronics International N.V.
+*/
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>

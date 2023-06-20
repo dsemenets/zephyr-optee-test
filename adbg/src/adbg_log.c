@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2014, STMicroelectronics International N.V.
+ * Copyright (c) 2023, EPAM Systems
  */
 
 #include <stdlib.h>
@@ -45,7 +46,6 @@ void Do_ADBG_HexLog(
 		}
 		AsciiBuffer[m] = '\0';
 
-//		LOG_PRINTK("  %-*s %s", (int)Cols * 3, HexBuffer, AsciiBuffer);
 		printk("  %-*s %s\n", (int)Cols * 3, HexBuffer, AsciiBuffer);
 	}
 }

@@ -1,19 +1,29 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2018, Linaro Limited
- * Copyright (c) 2023, EPAM Systems
  */
 
+#include <assert.h>
 #include <ck_debug.h>
+#include <inttypes.h>
+#ifdef OPENSSL_FOUND
+#include <openssl/asn1.h>
+#include <openssl/bio.h>
+#include <openssl/evp.h>
+#include <openssl/pem.h>
+#include <openssl/x509.h>
+#endif
 #include <pkcs11.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <utee_defines.h>
-#include <adbg.h>
-#include "optee_test.h"
-#include <zephyr/ztest.h>
-#include "regression_4000_data.h"
+#include <util.h>
+
+#include "xtest_test.h"
+#include "xtest_helpers.h"
+
+#include <regression_4000_data.h>
 
 /*
  * Some PKCS#11 object resources used in the tests
@@ -109,18 +119,6 @@ static CK_MECHANISM cktest_aes_keygen_mechanism = {
 	CKM_AES_KEY_GEN, NULL, 0,
 };
 
-void *pkcs11_1000_init(void)
-{
-	printk("Begin Test suite pckcs11_1000\n");
-	return NULL;
-}
-
-void pkcs11_1000_deinit(void *param)
-{
-	(void)param;
-	printk("End Test suite pckcs11_1000\n");
-}
-
 /*
  * Util to find a slot on which to open a session
  */
@@ -169,36 +167,36 @@ bail:
 	return rv;
 }
 
-ZTEST(pkcs11_1000, test_1000)
+static void xtest_pkcs11_test_1000(ADBG_Case_t *c)
 {
 	CK_RV rv;
-	ADBG_STRUCT_DECLARE("Initialize and close Cryptoki library");
 
 	rv = C_Initialize(NULL);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
-		goto out;
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		return;
 
 	rv = C_Finalize(NULL);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
-		goto out;
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		return;
 
 	rv = C_Initialize(NULL);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
-		goto out;
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		return;
 
 	rv = C_Initialize(NULL);
-	ADBG_EXPECT_CK_RESULT(&c, CKR_CRYPTOKI_ALREADY_INITIALIZED, rv);
+	ADBG_EXPECT_CK_RESULT(c, CKR_CRYPTOKI_ALREADY_INITIALIZED, rv);
 
 	rv = C_Finalize(NULL);
-	ADBG_EXPECT_CK_OK(&c, rv);
+	ADBG_EXPECT_CK_OK(c, rv);
 
 	rv = C_Finalize(NULL);
-	ADBG_EXPECT_CK_RESULT(&c, CKR_CRYPTOKI_NOT_INITIALIZED, rv);
-out:
-	ADBG_Assert(&c);
+	ADBG_EXPECT_CK_RESULT(c, CKR_CRYPTOKI_NOT_INITIALIZED, rv);
 }
 
-ZTEST(pkcs11_1000, test_1001)
+ADBG_CASE_DEFINE(pkcs11, 1000, xtest_pkcs11_test_1000,
+		 "Initialize and close Cryptoki library");
+
+static void xtest_pkcs11_test_1001(ADBG_Case_t *c)
 {
 	CK_RV rv = CKR_GENERAL_ERROR;
 	CK_SLOT_ID_PTR slot_ids = NULL;
@@ -213,43 +211,40 @@ ZTEST(pkcs11_1000, test_1001)
 	CK_MECHANISM_TYPE_PTR mecha_types = NULL;
 	CK_ULONG mecha_count = 0;
 	CK_MECHANISM_INFO mecha_info = { };
-	ADBG_STRUCT_DECLARE("PKCS11: List PKCS#11 slots and get information from");
 
 	rv = C_Initialize(NULL);
-	if (!ADBG_EXPECT_CK_OK(&c, rv)) {
-		ADBG_Assert(&c);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		return;
-	}
 
-	BeginSubCase("Test C_GetFunctionList()");
+	Do_ADBG_BeginSubCase(c, "Test C_GetFunctionList()");
 
 	rv = C_GetFunctionList(&ckfunc_list);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto out;
 
-	if (!ADBG_EXPECT_NOT_NULL(&c, ckfunc_list->C_GetInfo) ||
-	    !ADBG_EXPECT_NOT_NULL(&c, ckfunc_list->C_GetSlotList) ||
-	    !ADBG_EXPECT_NOT_NULL(&c, ckfunc_list->C_GetSlotInfo) ||
-	    !ADBG_EXPECT_NOT_NULL(&c, ckfunc_list->C_GetTokenInfo) ||
-	    !ADBG_EXPECT_NOT_NULL(&c, ckfunc_list->C_GetMechanismList) ||
-	    !ADBG_EXPECT_NOT_NULL(&c, ckfunc_list->C_GetMechanismInfo))
+	if (!ADBG_EXPECT_NOT_NULL(c, ckfunc_list->C_GetInfo) ||
+	    !ADBG_EXPECT_NOT_NULL(c, ckfunc_list->C_GetSlotList) ||
+	    !ADBG_EXPECT_NOT_NULL(c, ckfunc_list->C_GetSlotInfo) ||
+	    !ADBG_EXPECT_NOT_NULL(c, ckfunc_list->C_GetTokenInfo) ||
+	    !ADBG_EXPECT_NOT_NULL(c, ckfunc_list->C_GetMechanismList) ||
+	    !ADBG_EXPECT_NOT_NULL(c, ckfunc_list->C_GetMechanismInfo))
 		goto out;
 
-	EndSubCase("Test C_GetFunctionList()");
-	BeginSubCase("Test C_GetInfo()");
+	Do_ADBG_EndSubCase(c, "Test C_GetFunctionList()");
+	Do_ADBG_BeginSubCase(c, "Test C_GetInfo()");
 
 	rv = C_GetInfo(&lib_info);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto out;
 
-	EndSubCase("Test C_GetInfo()");
-	BeginSubCase("Test C_GetSlotList()");
+	Do_ADBG_EndSubCase(c, "Test C_GetInfo()");
+	Do_ADBG_BeginSubCase(c, "Test C_GetSlotList()");
 
 	rv = C_GetSlotList(0, NULL, &slot_count);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto out;
 
-	if (!ADBG_EXPECT_COMPARE_UNSIGNED(&c, slot_count, !=, 0))
+	if (!ADBG_EXPECT_COMPARE_UNSIGNED(c, slot_count, !=, 0))
 		goto out;
 
 	if (slot_count > 1) {
@@ -258,51 +253,51 @@ ZTEST(pkcs11_1000, test_1001)
 
 		slot_count = 0;
 		rv = C_GetSlotList(0, &id, &slot_count);
-		if (!ADBG_EXPECT_CK_RESULT(&c, CKR_BUFFER_TOO_SMALL, rv))
+		if (!ADBG_EXPECT_CK_RESULT(c, CKR_BUFFER_TOO_SMALL, rv))
 			goto out;
 	}
 
 	rv = C_GetSlotList(1, NULL, &present_slot_count);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto out;
 
-	if (!ADBG_EXPECT_COMPARE_UNSIGNED(&c, slot_count, ==,
+	if (!ADBG_EXPECT_COMPARE_UNSIGNED(c, slot_count, ==,
 					  present_slot_count))
 		goto out;
 
 	slot_ids = calloc(slot_count, sizeof(CK_SLOT_ID));
-	if (!ADBG_EXPECT_NOT_NULL(&c, slot_ids))
+	if (!ADBG_EXPECT_NOT_NULL(c, slot_ids))
 		goto out;
 
 	slot_count--;
 	rv = C_GetSlotList(1, slot_ids, &slot_count);
-	if (!ADBG_EXPECT_CK_RESULT(&c, CKR_BUFFER_TOO_SMALL, rv))
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_BUFFER_TOO_SMALL, rv))
 		goto out;
 
 	rv = C_GetSlotList(1, slot_ids, &slot_count);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto out;
 
-	EndSubCase("Test C_GetSlotList()");
-	BeginSubCase("Test C_Get{Slot|Token}Info()");
+	Do_ADBG_EndSubCase(c, "Test C_GetSlotList()");
+	Do_ADBG_BeginSubCase(c, "Test C_Get{Slot|Token}Info()");
 
 	for (i = 0; i < slot_count; i++) {
 		CK_SLOT_ID slot = slot_ids[i];
 
 		rv = C_GetSlotInfo(slot, &slot_info);
-		if (!ADBG_EXPECT_CK_OK(&c, rv))
+		if (!ADBG_EXPECT_CK_OK(c, rv))
 			goto out;
 
 		rv = C_GetTokenInfo(slot, &token_info);
-		if (!ADBG_EXPECT_CK_OK(&c, rv))
+		if (!ADBG_EXPECT_CK_OK(c, rv))
 			goto out;
 
 		if (max_slot_id < slot)
 			max_slot_id = slot;
 	}
 
-	EndSubCase("Test C_Get{Slot|Token}Info()");
-	BeginSubCase("Test C_GetMechanism{List|Info}()");
+	Do_ADBG_EndSubCase(c, "Test C_Get{Slot|Token}Info()");
+	Do_ADBG_BeginSubCase(c, "Test C_GetMechanism{List|Info}()");
 
 	for (i = 0; i < slot_count; i++) {
 		CK_SLOT_ID slot = slot_ids[i];
@@ -310,7 +305,7 @@ ZTEST(pkcs11_1000, test_1001)
 
 		mecha_count = 0;
 		rv = C_GetMechanismList(slot, NULL, &mecha_count);
-		if (!ADBG_EXPECT_CK_OK(&c, rv))
+		if (!ADBG_EXPECT_CK_OK(c, rv))
 			goto out;
 
 		if (mecha_count == 0)
@@ -318,29 +313,29 @@ ZTEST(pkcs11_1000, test_1001)
 
 		free(mecha_types);
 		mecha_types = calloc(mecha_count, sizeof(*mecha_types));
-		if (!ADBG_EXPECT_NOT_NULL(&c, mecha_types))
+		if (!ADBG_EXPECT_NOT_NULL(c, mecha_types))
 			goto out;
 
 		/* Test specific case: valid buffer reference with 0 count */
 		mecha_count = 0;
 		rv = C_GetMechanismList(slot, mecha_types, &mecha_count);
-		if (!ADBG_EXPECT_CK_RESULT(&c, CKR_BUFFER_TOO_SMALL, rv))
+		if (!ADBG_EXPECT_CK_RESULT(c, CKR_BUFFER_TOO_SMALL, rv))
 			goto out;
 
 		rv = C_GetMechanismList(slot, mecha_types, &mecha_count);
-		if (!ADBG_EXPECT_CK_OK(&c, rv))
+		if (!ADBG_EXPECT_CK_OK(c, rv))
 			goto out;
 
 		for (j = 0; j < mecha_count; j++) {
 			rv = C_GetMechanismInfo(slot, mecha_types[j],
 						&mecha_info);
-			if (!ADBG_EXPECT_CK_OK(&c, rv))
+			if (!ADBG_EXPECT_CK_OK(c, rv))
 				goto out;
 		}
 	}
 
-	EndSubCase("Test C_GetMechanism{List|Info}()");
-	BeginSubCase("Test C_GetMechanismList() with larger result buffer");
+	Do_ADBG_EndSubCase(c, "Test C_GetMechanism{List|Info}()");
+	Do_ADBG_BeginSubCase(c, "Test C_GetMechanismList() with larger result buffer");
 
 	for (i = 0; i < slot_count; i++) {
 		CK_SLOT_ID slot = slot_ids[i];
@@ -350,7 +345,7 @@ ZTEST(pkcs11_1000, test_1001)
 		size_t j = 0;
 
 		rv = C_GetMechanismList(slot, NULL, &real_mecha_count);
-		if (!ADBG_EXPECT_CK_OK(&c, rv))
+		if (!ADBG_EXPECT_CK_OK(c, rv))
 			goto out;
 
 		if (real_mecha_count == 0)
@@ -362,80 +357,82 @@ ZTEST(pkcs11_1000, test_1001)
 
 		free(mecha_types);
 		mecha_types = calloc(mecha_count, sizeof(*mecha_types));
-		if (!ADBG_EXPECT_NOT_NULL(&c, mecha_types))
+		if (!ADBG_EXPECT_NOT_NULL(c, mecha_types))
 			goto out;
 		memset(mecha_types, 0xCC,
 		       alloc_mecha_count * sizeof(*mecha_types));
 
 		rv = C_GetMechanismList(slot, mecha_types, &mecha_count);
-		if (!ADBG_EXPECT_CK_OK(&c, rv))
+		if (!ADBG_EXPECT_CK_OK(c, rv))
 			goto out;
 
-		if (!ADBG_EXPECT_COMPARE_UNSIGNED(&c, mecha_count, ==,
+		if (!ADBG_EXPECT_COMPARE_UNSIGNED(c, mecha_count, ==,
 						  real_mecha_count))
 			goto out;
 
 		data_ptr = (uint8_t *)mecha_types;
 		for (j = real_mecha_count * sizeof(*mecha_types);
 		     j < alloc_mecha_count * sizeof(*mecha_types); j++)
-			if (!ADBG_EXPECT_COMPARE_UNSIGNED(&c, data_ptr[j], ==,
+			if (!ADBG_EXPECT_COMPARE_UNSIGNED(c, data_ptr[j], ==,
 							  0xCC))
 				break;
 	}
 
-	EndSubCase("Test C_GetMechanismList() with larger result buffer");
-	BeginSubCase("Test C_Get*Info() with invalid reference");
+	Do_ADBG_EndSubCase(c, "Test C_GetMechanismList() with larger result buffer");
+	Do_ADBG_BeginSubCase(c, "Test C_Get*Info() with invalid reference");
 
 	rv = C_GetSlotInfo(max_slot_id + 1, &slot_info);
-	if (!ADBG_EXPECT_CK_RESULT(&c, CKR_SLOT_ID_INVALID, rv))
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_SLOT_ID_INVALID, rv))
 		goto out;
 
 	rv = C_GetTokenInfo(max_slot_id + 1, &token_info);
-	if (!ADBG_EXPECT_CK_RESULT(&c, CKR_SLOT_ID_INVALID, rv))
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_SLOT_ID_INVALID, rv))
 		goto out;
 
 	mecha_count = 1;
 	if (!mecha_types)
 		mecha_types = malloc(sizeof(*mecha_types));
-	if (!ADBG_EXPECT_NOT_NULL(&c, mecha_types))
+	if (!ADBG_EXPECT_NOT_NULL(c, mecha_types))
 		goto out;
 
 	rv = C_GetMechanismList(max_slot_id + 1, mecha_types, &mecha_count);
-	if (!ADBG_EXPECT_CK_RESULT(&c, CKR_SLOT_ID_INVALID, rv))
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_SLOT_ID_INVALID, rv))
 		goto out;
 
 	rv = C_GetMechanismInfo(max_slot_id + 1, CKM_AES_KEY_GEN, &mecha_info);
-	if (!ADBG_EXPECT_CK_RESULT(&c, CKR_SLOT_ID_INVALID, rv))
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_SLOT_ID_INVALID, rv))
 		goto out;
 
 	rv = C_GetSlotInfo(ULONG_MAX, &slot_info);
-	if (!ADBG_EXPECT_CK_RESULT(&c, CKR_SLOT_ID_INVALID, rv))
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_SLOT_ID_INVALID, rv))
 		goto out;
 
 	rv = C_GetTokenInfo(ULONG_MAX, &token_info);
-	if (!ADBG_EXPECT_CK_RESULT(&c, CKR_SLOT_ID_INVALID, rv))
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_SLOT_ID_INVALID, rv))
 		goto out;
 
 	mecha_count = 1;
 	rv = C_GetMechanismList(ULONG_MAX, mecha_types, &mecha_count);
-	if (!ADBG_EXPECT_CK_RESULT(&c, CKR_SLOT_ID_INVALID, rv))
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_SLOT_ID_INVALID, rv))
 		goto out;
 
 	rv = C_GetMechanismInfo(ULONG_MAX, CKM_AES_KEY_GEN, &mecha_info);
-	if (!ADBG_EXPECT_CK_RESULT(&c, CKR_SLOT_ID_INVALID, rv))
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_SLOT_ID_INVALID, rv))
 		goto out;
 
 out:
-	EndSubCase(NULL);
+	Do_ADBG_EndSubCase(c, NULL);
 	free(slot_ids);
 	free(mecha_types);
 
 	rv = C_Finalize(NULL);
-	ADBG_EXPECT_CK_OK(&c, rv);
-	ADBG_Assert(&c);
+	ADBG_EXPECT_CK_OK(c, rv);
 }
 
-ZTEST(pkcs11_1000, test_1002)
+ADBG_CASE_DEFINE(pkcs11, 1001, xtest_pkcs11_test_1001,
+		 "PKCS11: List PKCS#11 slots and get information from");
+
+static void xtest_pkcs11_test_1002(ADBG_Case_t *c)
 {
 	CK_RV rv = CKR_GENERAL_ERROR;
 	CK_SLOT_ID slot = 0;
@@ -443,128 +440,127 @@ ZTEST(pkcs11_1000, test_1002)
 	CK_FLAGS session_flags = 0;
 	CK_SESSION_INFO session_info = { };
 	CK_FUNCTION_LIST_PTR ckfunc_list = NULL;
-	ADBG_STRUCT_DECLARE("PKCS11: Open and close PKCS#11 sessions");
 
 	rv = init_lib_and_find_token_slot(&slot);
-	if (!ADBG_EXPECT_CK_OK(&c, rv)) {
-		ADBG_Assert(&c);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		return;
-	}
 
 	rv = C_GetFunctionList(&ckfunc_list);
-	if (!ADBG_EXPECT_CK_OK(&c, rv) ||
-	    !ADBG_EXPECT_NOT_NULL(&c, ckfunc_list->C_OpenSession) ||
-	    !ADBG_EXPECT_NOT_NULL(&c, ckfunc_list->C_CloseSession) ||
-	    !ADBG_EXPECT_NOT_NULL(&c, ckfunc_list->C_CloseAllSessions) ||
-	    !ADBG_EXPECT_NOT_NULL(&c, ckfunc_list->C_GetSessionInfo))
+	if (!ADBG_EXPECT_CK_OK(c, rv) ||
+	    !ADBG_EXPECT_NOT_NULL(c, ckfunc_list->C_OpenSession) ||
+	    !ADBG_EXPECT_NOT_NULL(c, ckfunc_list->C_CloseSession) ||
+	    !ADBG_EXPECT_NOT_NULL(c, ckfunc_list->C_CloseAllSessions) ||
+	    !ADBG_EXPECT_NOT_NULL(c, ckfunc_list->C_GetSessionInfo))
 		goto bail;
 
-	BeginSubCase("Test C_OpenSession()/C_GetSessionInfo()");
+	Do_ADBG_BeginSubCase(c, "Test C_OpenSession()/C_GetSessionInfo()");
 
 	session_flags = CKF_RW_SESSION;
 
 	rv = C_OpenSession(slot, session_flags, NULL, 0, &session[0]);
-	if (!ADBG_EXPECT_CK_RESULT(&c, CKR_SESSION_PARALLEL_NOT_SUPPORTED, rv))
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_SESSION_PARALLEL_NOT_SUPPORTED, rv))
 		goto bail;
 
 	session_flags = CKF_SERIAL_SESSION;
 
 	rv = C_OpenSession(slot, session_flags, NULL, 0, &session[0]);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto bail;
 
 	rv = C_GetSessionInfo(session[0], &session_info);
-	if (!ADBG_EXPECT_CK_OK(&c, rv) ||
-	    !ADBG_EXPECT_COMPARE_UNSIGNED(&c, session_info.slotID, ==, slot) ||
-	    !ADBG_EXPECT_COMPARE_UNSIGNED(&c, session_info.flags, ==,
+	if (!ADBG_EXPECT_CK_OK(c, rv) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, session_info.slotID, ==, slot) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, session_info.flags, ==,
 					  session_flags) ||
-	    !ADBG_EXPECT_COMPARE_UNSIGNED(&c, session_info.state, ==,
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, session_info.state, ==,
 					  CKS_RO_PUBLIC_SESSION) ||
-	    !ADBG_EXPECT_COMPARE_UNSIGNED(&c, session_info.ulDeviceError, ==, 0))
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, session_info.ulDeviceError, ==, 0))
 		goto bail;
 
 	session_flags = CKF_SERIAL_SESSION | CKF_RW_SESSION;
 
 	rv = C_OpenSession(slot, session_flags, NULL, 0, &session[1]);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto bail;
 
 	rv = C_GetSessionInfo(session[1], &session_info);
-	if (!ADBG_EXPECT_CK_OK(&c, rv) ||
-	    !ADBG_EXPECT_COMPARE_UNSIGNED(&c, session_info.slotID, ==, slot) ||
-	    !ADBG_EXPECT_COMPARE_UNSIGNED(&c, session_info.flags, ==,
+	if (!ADBG_EXPECT_CK_OK(c, rv) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, session_info.slotID, ==, slot) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, session_info.flags, ==,
 					  session_flags) ||
-	    !ADBG_EXPECT_COMPARE_UNSIGNED(&c, session_info.state, ==,
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, session_info.state, ==,
 					  CKS_RW_PUBLIC_SESSION) ||
-	    !ADBG_EXPECT_COMPARE_UNSIGNED(&c, session_info.ulDeviceError, ==, 0))
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, session_info.ulDeviceError, ==, 0))
 		goto bail;
 
 	rv = C_OpenSession(slot, session_flags, NULL, 0, &session[2]);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto bail;
 
 	rv = C_GetSessionInfo(session[2], &session_info);
-	if (!ADBG_EXPECT_CK_OK(&c, rv) ||
-	    !ADBG_EXPECT_COMPARE_UNSIGNED(&c, session_info.slotID, ==, slot) ||
-	    !ADBG_EXPECT_COMPARE_UNSIGNED(&c, session_info.flags, ==,
+	if (!ADBG_EXPECT_CK_OK(c, rv) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, session_info.slotID, ==, slot) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, session_info.flags, ==,
 					  session_flags) ||
-	    !ADBG_EXPECT_COMPARE_UNSIGNED(&c, session_info.state, ==,
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, session_info.state, ==,
 					  CKS_RW_PUBLIC_SESSION) ||
-	    !ADBG_EXPECT_COMPARE_UNSIGNED(&c, session_info.ulDeviceError, ==, 0))
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, session_info.ulDeviceError, ==, 0))
 		goto bail;
 
-	EndSubCase("Test C_OpenSession()/C_GetSessionInfo()");
-	BeginSubCase("Test C_CloseSession()");
+	Do_ADBG_EndSubCase(c, "Test C_OpenSession()/C_GetSessionInfo()");
+	Do_ADBG_BeginSubCase(c, "Test C_CloseSession()");
 
 	/* Close 2 of them */
 	rv = C_CloseSession(session[0]);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto bail;
 
 	rv = C_GetSessionInfo(session[0], &session_info);
-	if (!ADBG_EXPECT_CK_RESULT(&c, CKR_SESSION_HANDLE_INVALID, rv))
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_SESSION_HANDLE_INVALID, rv))
 		goto bail;
 
 	rv = C_GetSessionInfo(session[1], &session_info);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto bail;
 
 	rv = C_GetSessionInfo(session[2], &session_info);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto bail;
 
 	/* Close all remaining sessions, later calls should failed on session */
 	rv = C_CloseAllSessions(slot);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto bail;
 
 	rv = C_CloseSession(session[1]);
-	if (!ADBG_EXPECT_CK_RESULT(&c, CKR_SESSION_HANDLE_INVALID, rv))
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_SESSION_HANDLE_INVALID, rv))
 		goto bail;
 
 	rv = C_CloseSession(session[2]);
-	if (!ADBG_EXPECT_CK_RESULT(&c, CKR_SESSION_HANDLE_INVALID, rv))
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_SESSION_HANDLE_INVALID, rv))
 		goto bail;
 
 	rv = C_GetSessionInfo(session[1], &session_info);
-	if (!ADBG_EXPECT_CK_RESULT(&c, CKR_SESSION_HANDLE_INVALID, rv))
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_SESSION_HANDLE_INVALID, rv))
 		goto bail;
 
 	rv = C_GetSessionInfo(session[2], &session_info);
-	if (!ADBG_EXPECT_CK_RESULT(&c, CKR_SESSION_HANDLE_INVALID, rv))
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_SESSION_HANDLE_INVALID, rv))
 		goto bail;
 
 	/* Open a session, should be closed from library closure */
 	rv = C_OpenSession(slot, session_flags, NULL, 0, &session[0]);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto bail;
 
 bail:
-	EndSubCase(NULL);
+	Do_ADBG_EndSubCase(c, NULL);
 	rv = close_lib();
-	ADBG_EXPECT_CK_OK(&c, rv);
-	ADBG_Assert(&c);
+	ADBG_EXPECT_CK_OK(c, rv);
 }
+
+ADBG_CASE_DEFINE(pkcs11, 1002, xtest_pkcs11_test_1002,
+		 "PKCS11: Open and close PKCS#11 sessions");
 
 /*
  * Helpers for tests where we must log into the token.
@@ -631,7 +627,7 @@ static CK_RV init_user_test_token(CK_SLOT_ID slot)
 	return rv;
 }
 
-static CK_RV test_already_initialized_token(struct ADBG_Case *c, CK_SLOT_ID slot)
+static CK_RV test_already_initialized_token(ADBG_Case_t *c, CK_SLOT_ID slot)
 {
 	CK_RV rv = CKR_GENERAL_ERROR;
 	CK_TOKEN_INFO token_info = { };
@@ -720,7 +716,7 @@ out:
 	return rv;
 }
 
-static CK_RV test_uninitialized_token(struct ADBG_Case *c, CK_SLOT_ID slot)
+static CK_RV test_uninitialized_token(ADBG_Case_t *c, CK_SLOT_ID slot)
 {
 	CK_RV rv = CKR_GENERAL_ERROR;
 	CK_TOKEN_INFO token_info = { };
@@ -770,7 +766,7 @@ out:
 	return rv;
 }
 
-static CK_RV test_login_logout(struct ADBG_Case *c, CK_SLOT_ID slot)
+static CK_RV test_login_logout(ADBG_Case_t *c, CK_SLOT_ID slot)
 {
 	CK_FLAGS session_flags = CKF_SERIAL_SESSION | CKF_RW_SESSION;
 	CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
@@ -851,7 +847,7 @@ out:
 	return rv;
 }
 
-static CK_RV test_set_pin(struct ADBG_Case *c, CK_SLOT_ID slot,
+static CK_RV test_set_pin(ADBG_Case_t *c, CK_SLOT_ID slot,
 			  CK_USER_TYPE user_type)
 {
 	CK_FLAGS session_flags = CKF_SERIAL_SESSION | CKF_RW_SESSION;
@@ -919,56 +915,53 @@ out:
 	return rv;
 }
 
-ZTEST(pkcs11_1000, test_1003)
+static void xtest_pkcs11_test_1003(ADBG_Case_t *c)
 {
 	CK_RV rv = CKR_GENERAL_ERROR;
 	CK_FUNCTION_LIST_PTR ckfunc_list = NULL;
 	CK_SLOT_ID slot = 0;
 	CK_TOKEN_INFO token_info = { };
-	ADBG_STRUCT_DECLARE("PKCS11: Login to PKCS#11 token");
 
 	rv = C_GetFunctionList(&ckfunc_list);
-	if (!ADBG_EXPECT_CK_OK(&c, rv) ||
-	    !ADBG_EXPECT_NOT_NULL(&c, ckfunc_list->C_InitToken) ||
-	    !ADBG_EXPECT_NOT_NULL(&c, ckfunc_list->C_InitPIN) ||
-	    !ADBG_EXPECT_NOT_NULL(&c, ckfunc_list->C_SetPIN) ||
-	    !ADBG_EXPECT_NOT_NULL(&c, ckfunc_list->C_Login) ||
-	    !ADBG_EXPECT_NOT_NULL(&c, ckfunc_list->C_Logout))
+	if (!ADBG_EXPECT_CK_OK(c, rv) ||
+	    !ADBG_EXPECT_NOT_NULL(c, ckfunc_list->C_InitToken) ||
+	    !ADBG_EXPECT_NOT_NULL(c, ckfunc_list->C_InitPIN) ||
+	    !ADBG_EXPECT_NOT_NULL(c, ckfunc_list->C_SetPIN) ||
+	    !ADBG_EXPECT_NOT_NULL(c, ckfunc_list->C_Login) ||
+	    !ADBG_EXPECT_NOT_NULL(c, ckfunc_list->C_Logout))
 		goto out;
 
 	rv = init_lib_and_find_token_slot(&slot);
-	if (!ADBG_EXPECT_CK_OK(&c, rv)) {
-		ADBG_Assert(&c);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		return;
-	}
 
 	rv = C_GetTokenInfo(slot, &token_info);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto out;
 
 	/* Abort test if token is about to lock */
-	if (!ADBG_EXPECT_TRUE(&c, !(token_info.flags & CKF_SO_PIN_FINAL_TRY)))
+	if (!ADBG_EXPECT_TRUE(c, !(token_info.flags & CKF_SO_PIN_FINAL_TRY)))
 		goto out;
 
 	if (!(token_info.flags & CKF_TOKEN_INITIALIZED)) {
-		rv = test_uninitialized_token(&c, slot);
+		rv = test_uninitialized_token(c, slot);
 		if (rv != CKR_OK)
 			goto out;
 	}
 
-	rv = test_already_initialized_token(&c, slot);
+	rv = test_already_initialized_token(c, slot);
 	if (rv != CKR_OK)
 		goto out;
 
-	rv = test_login_logout(&c, slot);
+	rv = test_login_logout(c, slot);
 	if (rv != CKR_OK)
 		goto out;
 
-	rv = test_set_pin(&c, slot, CKU_USER);
+	rv = test_set_pin(c, slot, CKU_USER);
 	if (rv != CKR_OK)
 		goto out;
 
-	rv = test_set_pin(&c, slot, CKU_SO);
+	rv = test_set_pin(c, slot, CKU_SO);
 	if (rv != CKR_OK)
 		goto out;
 
@@ -976,12 +969,14 @@ ZTEST(pkcs11_1000, test_1003)
 	 * CKU_CONTEXT_SPECIFIC is anything not CKU_USER or CKU_SO in order
 	 * to skip the initial login.
 	 */
-	test_set_pin(&c, slot, CKU_CONTEXT_SPECIFIC);
+	test_set_pin(c, slot, CKU_CONTEXT_SPECIFIC);
 out:
 	rv = close_lib();
-	ADBG_EXPECT_CK_OK(&c, rv);
-	ADBG_Assert(&c);
+	ADBG_EXPECT_CK_OK(c, rv);
 }
+
+ADBG_CASE_DEFINE(pkcs11, 1003, xtest_pkcs11_test_1003,
+		 "PKCS11: Login to PKCS#11 token");
 
 static CK_ATTRIBUTE cktest_token_object[] = {
 	{ CKA_DECRYPT,	&(CK_BBOOL){CK_TRUE}, sizeof(CK_BBOOL) },
@@ -1004,7 +999,7 @@ static CK_ATTRIBUTE cktest_session_object[] = {
 };
 
 /* Create session object and token object from a session */
-static void test_create_destroy_single_object(struct ADBG_Case *c, bool persistent)
+static void test_create_destroy_single_object(ADBG_Case_t *c, bool persistent)
 {
 	CK_RV rv = CKR_GENERAL_ERROR;
 	CK_SLOT_ID slot = 0;
@@ -1043,7 +1038,7 @@ out:
 	ADBG_EXPECT_CK_OK(c, rv);
 }
 
-static void test_create_destroy_session_objects(struct ADBG_Case *c)
+static void test_create_destroy_session_objects(ADBG_Case_t *c)
 {
 	CK_RV rv = CKR_GENERAL_ERROR;
 	CK_SLOT_ID slot = 0;
@@ -1072,7 +1067,7 @@ static void test_create_destroy_session_objects(struct ADBG_Case *c)
 			break;
 	}
 
-	printk("    created object count: %zu", n);
+	Do_ADBG_Log("    created object count: %zu", n);
 
 	rv = C_CloseSession(session);
 	ADBG_EXPECT_CK_OK(c, rv);
@@ -1096,7 +1091,7 @@ out:
 }
 
 /* Create session object and token object from a session */
-static void test_create_objects_in_session(struct ADBG_Case *c, bool readwrite)
+static void test_create_objects_in_session(ADBG_Case_t *c, bool readwrite)
 {
 	CK_RV rv = CKR_GENERAL_ERROR;
 	CK_SLOT_ID slot = 0;
@@ -1151,31 +1146,32 @@ out:
 	ADBG_EXPECT_CK_OK(c, rv);
 }
 
-ZTEST(pkcs11_1000, test_1004)
+static void xtest_pkcs11_test_1004(ADBG_Case_t *c)
 {
-	ADBG_STRUCT_DECLARE("PKCS11: create/destroy PKCS#11 simple objects");
-
 	Do_ADBG_BeginSubCase(c, "Create and destroy a volatile object");
-	test_create_destroy_single_object(&c, false /*!persistent*/);
+	test_create_destroy_single_object(c, false /*!persistent*/);
 	Do_ADBG_EndSubCase(c, "Create and destroy a volatile object");
 
 	Do_ADBG_BeginSubCase(c, "Create and destroy a persistent object");
-	test_create_destroy_single_object(&c, true /*persistent*/);
+	test_create_destroy_single_object(c, true /*persistent*/);
 	Do_ADBG_EndSubCase(c, "Create and destroy a persistent object");
 
 	Do_ADBG_BeginSubCase(c, "Create and destroy many session objects");
-	test_create_destroy_session_objects(&c);
+	test_create_destroy_session_objects(c);
 	Do_ADBG_EndSubCase(c, "Create and destroy many session objects");
 
 	Do_ADBG_BeginSubCase(c, "Create objects in a read-only session");
-	test_create_objects_in_session(&c, false /*!readwrite*/);
+	test_create_objects_in_session(c, false /*!readwrite*/);
 	Do_ADBG_EndSubCase(c, "Create objects in a read-only session");
 
 	Do_ADBG_BeginSubCase(c, "Create objects in a read/write session");
-	test_create_objects_in_session(&c, true /*readwrite*/);
+	test_create_objects_in_session(c, true /*readwrite*/);
 	Do_ADBG_EndSubCase(c, "Create objects in a read/write session");
-	ADBG_Assert(&c);
 }
+
+ADBG_CASE_DEFINE(pkcs11, 1004, xtest_pkcs11_test_1004,
+		 "PKCS11: create/destroy PKCS#11 simple objects");
+
 
 static const CK_MECHANISM_TYPE allowed_only_aes_ecb[] = {
 	CKM_AES_ECB,
@@ -1274,7 +1270,7 @@ static const struct cktest_allowed_test cktest_allowed_invalid[] = {
 };
 
 /* Create session object and token object from a session */
-static CK_RV cipher_init_final(struct ADBG_Case *c, CK_SESSION_HANDLE session,
+static CK_RV cipher_init_final(ADBG_Case_t *c, CK_SESSION_HANDLE session,
 				CK_ATTRIBUTE_PTR attr_key, CK_ULONG attr_count,
 				CK_MECHANISM_PTR mechanism, uint32_t mode,
 				CK_RV expected_rc)
@@ -1343,37 +1339,34 @@ CK_KEY_ALLOWED_AES_ENC_TEST(cktest_aes_enc_only_cts, allowed_only_aes_cts);
 
 CK_KEY_ALLOWED_AES_DEC_TEST(cktest_aes_dec_only_ctr, allowed_only_aes_ctr);
 
-ZTEST(pkcs11_1000, test_1005)
+static void xtest_pkcs11_test_1005(ADBG_Case_t *c)
 {
 	CK_RV rv = CKR_GENERAL_ERROR;
 	CK_SLOT_ID slot = 0;
 	CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
 	CK_FLAGS session_flags = CKF_SERIAL_SESSION;
 	size_t n = 0;
-	ADBG_STRUCT_DECLARE("PKCS11: Check ciphering with valid and invalid keys #1");
 
 	rv = init_lib_and_find_token_slot(&slot);
-	if (!ADBG_EXPECT_CK_OK(&c, rv)) {
-		ADBG_Assert(&c);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		return;
-	}
 
 	rv = C_OpenSession(slot, session_flags, NULL, 0, &session);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto out;
 
 	for (n = 0; n < ARRAY_SIZE(cktest_allowed_valid); n++) {
 
-		Do_ADBG_BeginSubCase(&c, "valid usage #%zu", n);
+		Do_ADBG_BeginSubCase(c, "valid usage #%zu", n);
 
-		rv = cipher_init_final(&c, session,
+		rv = cipher_init_final(c, session,
 					cktest_allowed_valid[n].attr_key,
 					cktest_allowed_valid[n].attr_count,
 					cktest_allowed_valid[n].mechanism,
 					TEE_MODE_ENCRYPT,
 					CKR_OK);
 
-		ADBG_EXPECT_CK_OK(&c, rv);
+		ADBG_EXPECT_CK_OK(c, rv);
 
 		Do_ADBG_EndSubCase(c, NULL);
 		if (rv)
@@ -1384,14 +1377,14 @@ ZTEST(pkcs11_1000, test_1005)
 	for (n = 0; n < ARRAY_SIZE(cktest_allowed_invalid); n++) {
 		Do_ADBG_BeginSubCase(c, "invalid usage #%zu", n);
 
-		rv = cipher_init_final(&c, session,
+		rv = cipher_init_final(c, session,
 					cktest_allowed_invalid[n].attr_key,
 					cktest_allowed_invalid[n].attr_count,
 					cktest_allowed_invalid[n].mechanism,
 					TEE_MODE_ENCRYPT,
 					CKR_KEY_FUNCTION_NOT_PERMITTED);
 
-		ADBG_EXPECT_CK_OK(&c, rv);
+		ADBG_EXPECT_CK_OK(c, rv);
 
 		Do_ADBG_EndSubCase(c, NULL);
 		if (rv)
@@ -1401,79 +1394,80 @@ ZTEST(pkcs11_1000, test_1005)
 
 out:
 	rv = C_CloseSession(session);
-	ADBG_EXPECT_CK_OK(&c, rv);
+	ADBG_EXPECT_CK_OK(c, rv);
 
 	rv = close_lib();
-	ADBG_EXPECT_CK_OK(&c, rv);
-	ADBG_Assert(&c);
+	ADBG_EXPECT_CK_OK(c, rv);
 }
 
-ZTEST(pkcs11_1000, test_1006)
+
+ADBG_CASE_DEFINE(pkcs11, 1005, xtest_pkcs11_test_1005,
+		"PKCS11: Check ciphering with valid and invalid keys #1");
+
+static void xtest_pkcs11_test_1006(ADBG_Case_t *c)
 {
 	CK_RV rv = CKR_GENERAL_ERROR;
 	CK_SLOT_ID slot = 0;
 	CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
 	CK_FLAGS session_flags = CKF_SERIAL_SESSION;
-	ADBG_STRUCT_DECLARE("PKCS11: Check ciphering with valid and invalid keys #2");
 
 	rv = init_lib_and_find_token_slot(&slot);
-	if (!ADBG_EXPECT_CK_OK(&c, rv)) {
-		ADBG_Assert(&c);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		return;
-	}
 
 	rv = C_OpenSession(slot, session_flags, NULL, 0, &session);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto out;
 
 	/* Encrypt only AES CTS key */
-	rv = cipher_init_final(&c, session,
+	rv = cipher_init_final(c, session,
 				cktest_aes_enc_only_cts,
 				ARRAY_SIZE(cktest_aes_enc_only_cts),
 				&cktest_aes_cts_mechanism,
 				TEE_MODE_ENCRYPT,
 				CKR_OK);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto out;
 
-	rv = cipher_init_final(&c, session,
+	rv = cipher_init_final(c, session,
 				cktest_aes_enc_only_cts,
 				ARRAY_SIZE(cktest_aes_enc_only_cts),
 				&cktest_aes_cts_mechanism,
 				TEE_MODE_DECRYPT,
 				CKR_KEY_FUNCTION_NOT_PERMITTED);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto out;
 
 	/* Decrypt only AES CTR key */
-	rv = cipher_init_final(&c, session,
+	rv = cipher_init_final(c, session,
 				cktest_aes_dec_only_ctr,
 				ARRAY_SIZE(cktest_aes_dec_only_ctr),
 				&cktest_aes_ctr_mechanism,
 				TEE_MODE_ENCRYPT,
 				CKR_KEY_FUNCTION_NOT_PERMITTED);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto out;
 
-	rv = cipher_init_final(&c, session,
+	rv = cipher_init_final(c, session,
 				cktest_aes_dec_only_ctr,
 				ARRAY_SIZE(cktest_aes_dec_only_ctr),
 				&cktest_aes_ctr_mechanism,
 				TEE_MODE_ENCRYPT,
 				CKR_KEY_FUNCTION_NOT_PERMITTED);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto out;
 
 out:
 	rv = C_CloseSession(session);
-	ADBG_EXPECT_CK_OK(&c, rv);
+	ADBG_EXPECT_CK_OK(c, rv);
 
 	rv = close_lib();
-	ADBG_EXPECT_CK_OK(&c, rv);
-	ADBG_Assert(&c);
+	ADBG_EXPECT_CK_OK(c, rv);
 }
+ADBG_CASE_DEFINE(pkcs11, 1006, xtest_pkcs11_test_1006,
+		"PKCS11: Check ciphering with valid and invalid keys #2");
 
-static CK_RV open_cipher_session(struct ADBG_Case *c,
+static CK_RV open_cipher_session(ADBG_Case_t *c,
 				 CK_SLOT_ID slot, CK_SESSION_HANDLE_PTR session,
 				 CK_ATTRIBUTE_PTR attr_key, CK_ULONG attr_count,
 				 CK_MECHANISM_PTR mechanism, uint32_t mode)
@@ -1516,26 +1510,23 @@ static CK_RV open_cipher_session(struct ADBG_Case *c,
 	return rv;
 }
 
-ZTEST(pkcs11_1000, test_1007)
+static void xtest_pkcs11_test_1007(ADBG_Case_t *c)
 {
 	CK_RV rv = CKR_GENERAL_ERROR;
 	CK_SLOT_ID slot = 0;
 	CK_SESSION_HANDLE sessions[128];
 	size_t n = 0;
-	ADBG_STRUCT_DECLARE("PKCS11: Check operations release at session closure");
 
 	for (n = 0; n < ARRAY_SIZE(sessions); n++)
 		sessions[n] = CK_INVALID_HANDLE;
 
 	rv = init_lib_and_find_token_slot(&slot);
-	if (!ADBG_EXPECT_CK_OK(&c, rv)) {
-		ADBG_Assert(&c);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		return;
-	}
 
 	for (n = 0; n < ARRAY_SIZE(sessions); n++) {
 
-		rv = open_cipher_session(&c, slot, &sessions[n],
+		rv = open_cipher_session(c, slot, &sessions[n],
 					 cktest_allowed_valid[0].attr_key,
 					 cktest_allowed_valid[0].attr_count,
 					 cktest_allowed_valid[0].mechanism,
@@ -1545,22 +1536,22 @@ ZTEST(pkcs11_1000, test_1007)
 		if (rv == CKR_DEVICE_MEMORY)
 			break;
 
-		if (!ADBG_EXPECT_CK_OK(&c, rv))
+		if (!ADBG_EXPECT_CK_OK(c, rv))
 			goto out;
 	}
 
-	if (!ADBG_EXPECT_COMPARE_UNSIGNED(&c, n, >, 0))
+	if (!ADBG_EXPECT_COMPARE_UNSIGNED(c, n, >, 0))
 		goto out;
 
-	printk("    created sessions count: %zu", n);
+	Do_ADBG_Log("    created sessions count: %zu", n);
 
 	/* Closing session with out bound and invalid IDs (or negative ID) */
 	rv = C_CloseSession(sessions[n - 1] + 1024);
-	ADBG_EXPECT_CK_RESULT(&c, CKR_SESSION_HANDLE_INVALID, rv);
+	ADBG_EXPECT_CK_RESULT(c, CKR_SESSION_HANDLE_INVALID, rv);
 	rv = C_CloseSession(CK_INVALID_HANDLE);
-	ADBG_EXPECT_CK_RESULT(&c, CKR_SESSION_HANDLE_INVALID, rv);
+	ADBG_EXPECT_CK_RESULT(c, CKR_SESSION_HANDLE_INVALID, rv);
 	rv = C_CloseSession(~0);
-	ADBG_EXPECT_CK_RESULT(&c, CKR_SESSION_HANDLE_INVALID, rv);
+	ADBG_EXPECT_CK_RESULT(c, CKR_SESSION_HANDLE_INVALID, rv);
 
 	/* Closing each session: all related resources shall be free */
 	for (n = 0; n < ARRAY_SIZE(sessions); n++) {
@@ -1568,22 +1559,22 @@ ZTEST(pkcs11_1000, test_1007)
 			continue;
 
 		rv = C_CloseSession(sessions[n]);
-		ADBG_EXPECT_CK_OK(&c, rv);
+		ADBG_EXPECT_CK_OK(c, rv);
 		sessions[n] = CK_INVALID_HANDLE;
 	}
 
 	/* Open and close another session */
-	rv = open_cipher_session(&c, slot, &sessions[0],
+	rv = open_cipher_session(c, slot, &sessions[0],
 				 cktest_allowed_valid[0].attr_key,
 				 cktest_allowed_valid[0].attr_count,
 				 cktest_allowed_valid[0].mechanism,
 				 TEE_MODE_ENCRYPT);
 
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto out;
 
 	rv = C_CloseSession(sessions[0]);
-	ADBG_EXPECT_CK_OK(&c, rv);
+	ADBG_EXPECT_CK_OK(c, rv);
 	sessions[0] = CK_INVALID_HANDLE;
 
 out:
@@ -1592,13 +1583,14 @@ out:
 			continue;
 
 		rv = C_CloseSession(sessions[n]);
-		ADBG_EXPECT_CK_OK(&c, rv);
+		ADBG_EXPECT_CK_OK(c, rv);
 	}
 
 	rv = close_lib();
-	ADBG_EXPECT_CK_OK(&c, rv);
-	ADBG_Assert(&c);
+	ADBG_EXPECT_CK_OK(c, rv);
 }
+ADBG_CASE_DEFINE(pkcs11, 1007, xtest_pkcs11_test_1007,
+		"PKCS11: Check operations release at session closure");
 
 #define CK_MAC_KEY_AES(_key_array) \
 	{								\
@@ -1771,7 +1763,7 @@ static size_t get_mac_test_len(struct mac_test const *test)
 	return test->out_len;
 }
 
-ZTEST(pkcs11_1000, test_1008)
+static void xtest_pkcs11_test_1008(ADBG_Case_t *c)
 {
 	CK_RV rv = CKR_GENERAL_ERROR;
 	CK_SLOT_ID slot = 0;
@@ -1782,14 +1774,13 @@ ZTEST(pkcs11_1000, test_1008)
 	CK_ULONG out_size = 0;
 	struct mac_test const *test = NULL;
 	size_t n = 0;
-	ADBG_STRUCT_DECLARE("PKCS11: Check Compliance of C_Sign - HMAC algorithms");
 
 	rv = init_lib_and_find_token_slot(&slot);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		return;
 
 	rv = C_OpenSession(slot, session_flags, NULL, 0, &session);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto err_close_lib;
 
 	for (n = 0; n < ARRAY_SIZE(cktest_mac_cases); n++) {
@@ -1800,30 +1791,30 @@ ZTEST(pkcs11_1000, test_1008)
 
 		rv = C_CreateObject(session, test->attr_key, test->attr_count,
 				    &key_handle);
-		if (!ADBG_EXPECT_CK_OK(&c, rv))
+		if (!ADBG_EXPECT_CK_OK(c, rv))
 			goto err;
 
 		/* Test signature in 1 step */
 		if (test->in != NULL) {
 			rv = C_SignInit(session, test->mechanism, key_handle);
-			if (!ADBG_EXPECT_CK_OK(&c, rv))
+			if (!ADBG_EXPECT_CK_OK(c, rv))
 				goto err_destr_obj;
 
 			/* Pass input buffer of size 0 */
 			rv = C_SignUpdate(session,
 					  (void *)test->in, 0);
-			if (!ADBG_EXPECT_CK_OK(&c, rv))
+			if (!ADBG_EXPECT_CK_OK(c, rv))
 				goto err_destr_obj;
 
 			rv = C_SignUpdate(session,
 					  (void *)test->in, test->in_len);
-			if (!ADBG_EXPECT_CK_OK(&c, rv))
+			if (!ADBG_EXPECT_CK_OK(c, rv))
 				goto err_destr_obj;
 
 			/* Test too short buffer case */
 			out_size = 1;
 			rv = C_SignFinal(session, out, &out_size);
-			if (!ADBG_EXPECT_CK_RESULT(&c, CKR_BUFFER_TOO_SMALL, rv))
+			if (!ADBG_EXPECT_CK_RESULT(c, CKR_BUFFER_TOO_SMALL, rv))
 				goto err_destr_obj;
 
 			/*
@@ -1832,7 +1823,7 @@ ZTEST(pkcs11_1000, test_1008)
 			 */
 			out_size = 0;
 			rv = C_SignFinal(session, NULL, &out_size);
-			if (!ADBG_EXPECT_CK_OK(&c, rv))
+			if (!ADBG_EXPECT_CK_OK(c, rv))
 				goto err_destr_obj;
 
 			/*
@@ -1841,35 +1832,35 @@ ZTEST(pkcs11_1000, test_1008)
 			 */
 			out_size = 42;
 			rv = C_SignFinal(session, NULL, &out_size);
-			if (!ADBG_EXPECT_CK_OK(&c, rv))
+			if (!ADBG_EXPECT_CK_OK(c, rv))
 				goto err_destr_obj;
 
 			/* Get to full output */
 			memset(out, 0, out_size);
 			rv = C_SignFinal(session, out, &out_size);
-			if (!ADBG_EXPECT_CK_OK(&c, rv))
+			if (!ADBG_EXPECT_CK_OK(c, rv))
 				goto err_destr_obj;
 
-			(void)ADBG_EXPECT_BUFFER(&c, test->out,
+			(void)ADBG_EXPECT_BUFFER(c, test->out,
 						 get_mac_test_len(test),
 						 out, out_size);
 		}
 
 		/* Test 2 step update signature */
 		rv = C_SignInit(session, test->mechanism, key_handle);
-		if (!ADBG_EXPECT_CK_OK(&c, rv))
+		if (!ADBG_EXPECT_CK_OK(c, rv))
 			goto err_destr_obj;
 
 		if (test->in != NULL) {
 			rv = C_SignUpdate(session,
 					  (void *)test->in, test->in_incr);
-			if (!ADBG_EXPECT_CK_OK(&c, rv))
+			if (!ADBG_EXPECT_CK_OK(c, rv))
 				goto err_destr_obj;
 
 			rv = C_SignUpdate(session,
 					  (void *)(test->in + test->in_incr),
 					  test->in_len - test->in_incr);
-			if (!ADBG_EXPECT_CK_OK(&c, rv))
+			if (!ADBG_EXPECT_CK_OK(c, rv))
 				goto err_destr_obj;
 		}
 
@@ -1877,24 +1868,24 @@ ZTEST(pkcs11_1000, test_1008)
 		memset(out, 0, sizeof(out));
 
 		rv = C_SignFinal(session, out, &out_size);
-		if (!ADBG_EXPECT_CK_OK(&c, rv))
+		if (!ADBG_EXPECT_CK_OK(c, rv))
 			goto err_destr_obj;
 
-		(void)ADBG_EXPECT_BUFFER(&c, test->out,
+		(void)ADBG_EXPECT_BUFFER(c, test->out,
 					 get_mac_test_len(test), out,
 					 out_size);
 
 		/* Test 3 signature in one shot */
 		if (test->in != NULL) {
 			rv = C_SignInit(session, test->mechanism, key_handle);
-			if (!ADBG_EXPECT_CK_OK(&c, rv))
+			if (!ADBG_EXPECT_CK_OK(c, rv))
 				goto err_destr_obj;
 
 			/* Test too short buffer case */
 			out_size = 1;
 			rv = C_Sign(session,(void *)test->in, test->in_len,
 				    out, &out_size);
-			if (!ADBG_EXPECT_CK_RESULT(&c, CKR_BUFFER_TOO_SMALL, rv))
+			if (!ADBG_EXPECT_CK_RESULT(c, CKR_BUFFER_TOO_SMALL, rv))
 				goto err_destr_obj;
 
 			/*
@@ -1904,7 +1895,7 @@ ZTEST(pkcs11_1000, test_1008)
 			out_size = 0;
 			rv = C_Sign(session, (void *)test->in, test->in_len,
 				    NULL, &out_size);
-			if (!ADBG_EXPECT_CK_OK(&c, rv))
+			if (!ADBG_EXPECT_CK_OK(c, rv))
 				goto err_destr_obj;
 
 			/*
@@ -1914,23 +1905,23 @@ ZTEST(pkcs11_1000, test_1008)
 			out_size = 42;
 			rv = C_Sign(session, (void *)test->in, test->in_len,
 				    NULL, &out_size);
-			if (!ADBG_EXPECT_CK_OK(&c, rv))
+			if (!ADBG_EXPECT_CK_OK(c, rv))
 				goto err_destr_obj;
 
 			/* Get to full output */
 			memset(out, 0, out_size);
 			rv = C_Sign(session,(void *)test->in, test->in_len,
 				    out, &out_size);
-			if (!ADBG_EXPECT_CK_OK(&c, rv))
+			if (!ADBG_EXPECT_CK_OK(c, rv))
 				goto err_destr_obj;
 
-			(void)ADBG_EXPECT_BUFFER(&c, test->out,
+			(void)ADBG_EXPECT_BUFFER(c, test->out,
 						 get_mac_test_len(test),
 						 out, out_size);
 		}
 
 		rv = C_DestroyObject(session, key_handle);
-		if (!ADBG_EXPECT_CK_OK(&c, rv))
+		if (!ADBG_EXPECT_CK_OK(c, rv))
 			goto err;
 
 		Do_ADBG_EndSubCase(c, NULL);
@@ -1938,17 +1929,18 @@ ZTEST(pkcs11_1000, test_1008)
 	goto out;
 
 err_destr_obj:
-	ADBG_EXPECT_CK_OK(&c, C_DestroyObject(session, key_handle));
+	ADBG_EXPECT_CK_OK(c, C_DestroyObject(session, key_handle));
 err:
 	Do_ADBG_EndSubCase(c, NULL);
 out:
-	ADBG_EXPECT_CK_OK(&c, C_CloseSession(session));
+	ADBG_EXPECT_CK_OK(c, C_CloseSession(session));
 err_close_lib:
-	ADBG_EXPECT_CK_OK(&c, close_lib());
-	ADBG_Assert(&c);
+	ADBG_EXPECT_CK_OK(c, close_lib());
 }
+ADBG_CASE_DEFINE(pkcs11, 1008, xtest_pkcs11_test_1008,
+		 "PKCS11: Check Compliance of C_Sign - HMAC algorithms");
 
-ZTEST(pkcs11_1000, test_1009)
+static void xtest_pkcs11_test_1009(ADBG_Case_t *c)
 {
 	CK_RV rv = CKR_GENERAL_ERROR;
 	CK_SLOT_ID slot = 0;
@@ -1957,95 +1949,92 @@ ZTEST(pkcs11_1000, test_1009)
 	CK_OBJECT_HANDLE key_handle = CK_INVALID_HANDLE;
 	struct mac_test const *test = NULL;
 	size_t n = 0;
-	ADBG_STRUCT_DECLARE("PKCS11: Check Compliance of C_Verify - HMAC Algorithms");
 
 	rv = init_lib_and_find_token_slot(&slot);
-	if (!ADBG_EXPECT_CK_OK(&c, rv)) {
-		ADBG_Assert(&c);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		return;
-	}
 
 	rv = C_OpenSession(slot, session_flags, NULL, 0, &session);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto err_close_lib;
 
 	for (n = 0; n < ARRAY_SIZE(cktest_mac_cases); n++) {
 
 		test = &cktest_mac_cases[n];
-		Do_ADBG_BeginSubCase(&c, "Verify case %zu algo (%s)", n,
+		Do_ADBG_BeginSubCase(c, "Verify case %zu algo (%s)", n,
 				     ckm2str(test->mechanism->mechanism));
 
 		rv = C_CreateObject(session, test->attr_key, test->attr_count,
 				    &key_handle);
-		if (!ADBG_EXPECT_CK_OK(&c, rv))
+		if (!ADBG_EXPECT_CK_OK(c, rv))
 			goto err;
 
 		/* Test Verification in 1 step */
 		if (test->in != NULL) {
 			rv = C_VerifyInit(session, test->mechanism, key_handle);
-			if (!ADBG_EXPECT_CK_OK(&c, rv))
+			if (!ADBG_EXPECT_CK_OK(c, rv))
 				goto err_destr_obj;
 
 			/* Pass input buffer with size 0 - No affect */
 			rv = C_VerifyUpdate(session, (void *)test->in, 0);
-			if (!ADBG_EXPECT_CK_OK(&c, rv))
+			if (!ADBG_EXPECT_CK_OK(c, rv))
 				goto err_destr_obj;
 
 			rv = C_VerifyUpdate(session, (void *)test->in,
 					    test->in_len);
-			if (!ADBG_EXPECT_CK_OK(&c, rv))
+			if (!ADBG_EXPECT_CK_OK(c, rv))
 				goto err_destr_obj;
 
 			rv = C_VerifyFinal(session,
 					   (void *)test->out,
 					   get_mac_test_len(test));
-			if (!ADBG_EXPECT_CK_OK(&c, rv))
+			if (!ADBG_EXPECT_CK_OK(c, rv))
 				goto err_destr_obj;
 
 		}
 
 		/* Test 2 step update verification*/
 		rv = C_VerifyInit(session, test->mechanism, key_handle);
-		if (!ADBG_EXPECT_CK_OK(&c, rv))
+		if (!ADBG_EXPECT_CK_OK(c, rv))
 			goto err_destr_obj;
 
 		if (test->in != NULL) {
 			rv = C_VerifyUpdate(session,
 					    (void *)test->in, test->in_incr);
-			if (!ADBG_EXPECT_CK_OK(&c, rv))
+			if (!ADBG_EXPECT_CK_OK(c, rv))
 				goto err_destr_obj;
 
 			rv = C_VerifyUpdate(session,
 					    (void *)(test->in + test->in_incr),
 					    test->in_len - test->in_incr);
-			if (!ADBG_EXPECT_CK_OK(&c, rv))
+			if (!ADBG_EXPECT_CK_OK(c, rv))
 				goto err_destr_obj;
 		}
 
 		rv = C_VerifyFinal(session, (void *)test->out,
 				   get_mac_test_len(test));
-		if (!ADBG_EXPECT_CK_OK(&c, rv))
+		if (!ADBG_EXPECT_CK_OK(c, rv))
 			goto err_destr_obj;
 
 		/* Error as Operation has already completed */
 		rv = C_Verify(session,
 			      (void *)test->in, test->in_len,
 			      (void *)test->out, get_mac_test_len(test));
-		if (!ADBG_EXPECT_CK_RESULT(&c, CKR_OPERATION_NOT_INITIALIZED,
+		if (!ADBG_EXPECT_CK_RESULT(c, CKR_OPERATION_NOT_INITIALIZED,
 					   rv))
 			goto err_destr_obj;
 
 		/* Test 3 verification in one shot */
 		if (test->in != NULL) {
 			rv = C_VerifyInit(session, test->mechanism, key_handle);
-			if (!ADBG_EXPECT_CK_OK(&c, rv))
+			if (!ADBG_EXPECT_CK_OK(c, rv))
 				goto err_destr_obj;
 
 			rv = C_Verify(session,
 				      (void *)test->in, test->in_len,
 				      (void *)test->out,
 				      get_mac_test_len(test));
-			if (!ADBG_EXPECT_CK_OK(&c, rv))
+			if (!ADBG_EXPECT_CK_OK(c, rv))
 				goto err_destr_obj;
 
 			/* Try calling Verify again */
@@ -2053,7 +2042,7 @@ ZTEST(pkcs11_1000, test_1009)
 				      (void *)test->in, test->in_len,
 				      (void *)test->out,
 				      get_mac_test_len(test));
-			if (!ADBG_EXPECT_CK_RESULT(&c,
+			if (!ADBG_EXPECT_CK_RESULT(c,
 						  CKR_OPERATION_NOT_INITIALIZED,
 						  rv))
 				goto err_destr_obj;
@@ -2065,16 +2054,16 @@ ZTEST(pkcs11_1000, test_1009)
 		 */
 		if (test->in != NULL) {
 			rv = C_VerifyInit(session, test->mechanism, key_handle);
-			if (!ADBG_EXPECT_CK_OK(&c, rv))
+			if (!ADBG_EXPECT_CK_OK(c, rv))
 				goto err_destr_obj;
 
 			rv = C_VerifyUpdate(session, (void *)test->in,
 					    test->in_len);
-			if (!ADBG_EXPECT_CK_OK(&c, rv))
+			if (!ADBG_EXPECT_CK_OK(c, rv))
 				goto err_destr_obj;
 
 			rv = C_VerifyFinal(session, (void *)test->out, 3);
-			if (!ADBG_EXPECT_CK_RESULT(&c,
+			if (!ADBG_EXPECT_CK_RESULT(c,
 						   ckm_is_hmac_general(test) ?
 						   CKR_OK :
 						   CKR_SIGNATURE_LEN_RANGE,
@@ -2088,25 +2077,25 @@ ZTEST(pkcs11_1000, test_1009)
 		 */
 		if (test->in != NULL) {
 			rv = C_VerifyInit(session, test->mechanism, key_handle);
-			if (!ADBG_EXPECT_CK_OK(&c, rv))
+			if (!ADBG_EXPECT_CK_OK(c, rv))
 				goto err_destr_obj;
 
 			rv = C_Verify(session,
 				      (void *)test->in, test->in_len,
 				      (void *)test->out, 0);
-			if (!ADBG_EXPECT_CK_RESULT(&c, CKR_SIGNATURE_LEN_RANGE,
+			if (!ADBG_EXPECT_CK_RESULT(c, CKR_SIGNATURE_LEN_RANGE,
 						   rv))
 				goto err_destr_obj;
 
 			rv = C_VerifyInit(session, test->mechanism, key_handle);
-			if (!ADBG_EXPECT_CK_OK(&c, rv))
+			if (!ADBG_EXPECT_CK_OK(c, rv))
 				goto err_destr_obj;
 
 			rv = C_Verify(session,
 				      (void *)test->in, test->in_len,
 				      (void *)test->out,
 				      TEE_MAX_HASH_SIZE + 1);
-			if (!ADBG_EXPECT_CK_RESULT(&c, CKR_SIGNATURE_LEN_RANGE,
+			if (!ADBG_EXPECT_CK_RESULT(c, CKR_SIGNATURE_LEN_RANGE,
 						   rv))
 				goto err_destr_obj;
 		}
@@ -2114,27 +2103,27 @@ ZTEST(pkcs11_1000, test_1009)
 		/* Test 6 verification - Invalid Operation sequence */
 		if (test->in != NULL) {
 			rv = C_VerifyInit(session, test->mechanism, key_handle);
-			if (!ADBG_EXPECT_CK_OK(&c, rv))
+			if (!ADBG_EXPECT_CK_OK(c, rv))
 				goto err_destr_obj;
 
 			rv = C_Verify(session,
 				      (void *)test->in, test->in_len,
 				      (void *)test->out,
 				      get_mac_test_len(test));
-			if (!ADBG_EXPECT_CK_OK(&c, rv))
+			if (!ADBG_EXPECT_CK_OK(c, rv))
 				goto err_destr_obj;
 
 			/* Init session has already terminated with C_Verify */
 			rv = C_VerifyUpdate(session, (void *)test->in,
 					    test->in_len);
-			if (!ADBG_EXPECT_CK_RESULT(&c,
+			if (!ADBG_EXPECT_CK_RESULT(c,
 						  CKR_OPERATION_NOT_INITIALIZED,
 						  rv))
 				goto err_destr_obj;
 		}
 
 		rv = C_DestroyObject(session, key_handle);
-		if (!ADBG_EXPECT_CK_OK(&c, rv))
+		if (!ADBG_EXPECT_CK_OK(c, rv))
 			goto err;
 
 		Do_ADBG_EndSubCase(c, NULL);
@@ -2142,15 +2131,16 @@ ZTEST(pkcs11_1000, test_1009)
 	goto out;
 
 err_destr_obj:
-	ADBG_EXPECT_CK_OK(&c, C_DestroyObject(session, key_handle));
+	ADBG_EXPECT_CK_OK(c, C_DestroyObject(session, key_handle));
 err:
 	Do_ADBG_EndSubCase(c, NULL);
 out:
-	ADBG_EXPECT_CK_OK(&c, C_CloseSession(session));
+	ADBG_EXPECT_CK_OK(c, C_CloseSession(session));
 err_close_lib:
-	ADBG_EXPECT_CK_OK(&c, close_lib());
-	ADBG_Assert(&c);
+	ADBG_EXPECT_CK_OK(c, close_lib());
 }
+ADBG_CASE_DEFINE(pkcs11, 1009, xtest_pkcs11_test_1009,
+		 "PKCS11: Check Compliance of C_Verify - HMAC Algorithms");
 
 /* Bad key type */
 static CK_ATTRIBUTE cktest_generate_gensecret_object_error1[] = {
@@ -2210,7 +2200,7 @@ static CK_ATTRIBUTE cktest_generate_aes_object[] = {
 	{ CKA_VALUE_LEN, &(CK_ULONG){16}, sizeof(CK_ULONG) },
 };
 
-ZTEST(pkcs11_1000, test_1010)
+static void xtest_pkcs11_test_1010(ADBG_Case_t *c)
 {
 	CK_RV rv = CKR_GENERAL_ERROR;
 	CK_SLOT_ID slot = 0;
@@ -2223,16 +2213,13 @@ ZTEST(pkcs11_1000, test_1010)
 						    mac_data_md5_out1, false);
 	uint8_t out[512] = { 0 };
 	CK_ULONG out_len = 512;
-	ADBG_STRUCT_DECLARE("PKCS11: Key Generation");
 
 	rv = init_lib_and_find_token_slot(&slot);
-	if (!ADBG_EXPECT_CK_OK(&c, rv)) {
-		ADBG_Assert(&c);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		return;
-	}
 
 	rv = C_OpenSession(slot, session_flags, NULL, 0, &session);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto close_lib;
 
 	/*
@@ -2243,35 +2230,35 @@ ZTEST(pkcs11_1000, test_1010)
 	/* NULL Template with !null template length */
 	rv = C_GenerateKey(session, &cktest_gensecret_keygen_mechanism, NULL,
 			   3, &key_handle);
-	if (!ADBG_EXPECT_CK_RESULT(&c, CKR_ARGUMENTS_BAD, rv))
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_ARGUMENTS_BAD, rv))
 		goto err;
 
 	rv = C_GenerateKey(session, &cktest_gensecret_keygen_mechanism,
 			   cktest_generate_gensecret_object_error1,
 			   ARRAY_SIZE(cktest_generate_gensecret_object_error1),
 			   &key_handle);
-	if (!ADBG_EXPECT_CK_RESULT(&c, CKR_TEMPLATE_INCONSISTENT, rv))
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_TEMPLATE_INCONSISTENT, rv))
 		goto err;
 
 	rv = C_GenerateKey(session, &cktest_gensecret_keygen_mechanism,
 			   cktest_generate_gensecret_object_error2,
 			   ARRAY_SIZE(cktest_generate_gensecret_object_error2),
 			   &key_handle);
-	if (!ADBG_EXPECT_CK_RESULT(&c, CKR_TEMPLATE_INCOMPLETE, rv))
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_TEMPLATE_INCOMPLETE, rv))
 		goto err;
 
 	rv = C_GenerateKey(session, &cktest_gensecret_keygen_mechanism,
 			   cktest_generate_gensecret_object_error3,
 			   ARRAY_SIZE(cktest_generate_gensecret_object_error3),
 			   &key_handle);
-	if (!ADBG_EXPECT_CK_RESULT(&c, CKR_TEMPLATE_INCONSISTENT, rv))
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_TEMPLATE_INCONSISTENT, rv))
 		goto err;
 
 	rv = C_GenerateKey(session, &cktest_gensecret_keygen_mechanism,
 			   cktest_generate_gensecret_object_error4,
 			   ARRAY_SIZE(cktest_generate_gensecret_object_error4),
 			   &key_handle);
-	if (!ADBG_EXPECT_CK_RESULT(&c, CKR_TEMPLATE_INCONSISTENT, rv))
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_TEMPLATE_INCONSISTENT, rv))
 		goto err;
 
 	Do_ADBG_EndSubCase(c, NULL);
@@ -2286,15 +2273,15 @@ ZTEST(pkcs11_1000, test_1010)
 			   cktest_generate_gensecret_object_valid1,
 			   ARRAY_SIZE(cktest_generate_gensecret_object_valid1),
 			   &key_handle);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto err;
 
 	rv = C_EncryptInit(session, &cktest_aes_cbc_mechanism, key_handle);
-	if (!ADBG_EXPECT_CK_RESULT(&c, CKR_KEY_FUNCTION_NOT_PERMITTED, rv))
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_KEY_FUNCTION_NOT_PERMITTED, rv))
 		goto err_destr_obj;
 
 	rv = C_DestroyObject(session, key_handle);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto err;
 
 	Do_ADBG_EndSubCase(c, NULL);
@@ -2308,20 +2295,20 @@ ZTEST(pkcs11_1000, test_1010)
 			   cktest_generate_gensecret_object_valid2,
 			   ARRAY_SIZE(cktest_generate_gensecret_object_valid2),
 			   &key_handle);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto err;
 
 	rv = C_SignInit(session, test_sign.mechanism, key_handle);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto err_destr_obj;
 
 	rv = C_Sign(session, (void *)test_sign.in, test_sign.in_len,
 		    (void *)out, &out_len);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto err_destr_obj;
 
 	rv = C_DestroyObject(session, key_handle);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto err;
 
 	Do_ADBG_EndSubCase(c, NULL);
@@ -2336,20 +2323,20 @@ ZTEST(pkcs11_1000, test_1010)
 			   cktest_generate_aes_object,
 			   ARRAY_SIZE(cktest_generate_aes_object),
 			   &key_handle);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto err;
 
 	rv = C_EncryptInit(session, &cktest_aes_cbc_mechanism, key_handle);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto err_destr_obj;
 
 	rv = C_EncryptFinal(session, NULL, NULL);
 	/* Only check that the operation is no more active */
-	if (!ADBG_EXPECT_TRUE(&c, rv != CKR_BUFFER_TOO_SMALL))
+	if (!ADBG_EXPECT_TRUE(c, rv != CKR_BUFFER_TOO_SMALL))
 		goto err;
 
 	rv = C_DestroyObject(session, key_handle);
-	if (!ADBG_EXPECT_CK_OK(&c, rv))
+	if (!ADBG_EXPECT_CK_OK(c, rv))
 		goto err;
 
 	Do_ADBG_EndSubCase(c, NULL);
@@ -2357,15 +2344,16 @@ ZTEST(pkcs11_1000, test_1010)
 	goto out;
 
 err_destr_obj:
-	ADBG_EXPECT_CK_OK(&c, C_DestroyObject(session, key_handle));
+	ADBG_EXPECT_CK_OK(c, C_DestroyObject(session, key_handle));
 err:
 	Do_ADBG_EndSubCase(c, NULL);
 out:
-	ADBG_EXPECT_CK_OK(&c, C_CloseSession(session));
+	ADBG_EXPECT_CK_OK(c, C_CloseSession(session));
 close_lib:
-	ADBG_EXPECT_CK_OK(&c, close_lib());
-	ADBG_Assert(&c);
+	ADBG_EXPECT_CK_OK(c, close_lib());
 }
+ADBG_CASE_DEFINE(pkcs11, 1010, xtest_pkcs11_test_1010,
+		 "PKCS11: Key Generation");
 
 static CK_RV create_data_object(CK_SESSION_HANDLE session,
 				CK_OBJECT_HANDLE *obj_handle,
@@ -2815,14 +2803,8 @@ destr_obj:
 close_lib:
 	ADBG_EXPECT_CK_OK(c, close_lib());
 }
-
-ZTEST(pkcs11_1000, test_1011)
-{
-	ADBG_STRUCT_DECLARE("PKCS11: Test Find Objects");
-
-	xtest_pkcs11_test_1011(&c);
-	ADBG_Assert(&c);
-}
+ADBG_CASE_DEFINE(pkcs11, 1011, xtest_pkcs11_test_1011,
+		 "PKCS11: Test Find Objects");
 
 static void xtest_pkcs11_test_1012(ADBG_Case_t *c)
 {
@@ -3144,14 +3126,8 @@ out:
 close_lib:
 	ADBG_EXPECT_CK_OK(c, close_lib());
 }
-
-ZTEST(pkcs11_1000, test_1012)
-{
-	ADBG_STRUCT_DECLARE("PKCS11: Serializer tests");
-
-	xtest_pkcs11_test_1012(&c);
-	ADBG_Assert(&c);
-}
+ADBG_CASE_DEFINE(pkcs11, 1012, xtest_pkcs11_test_1012,
+		 "PKCS11: Serializer tests");
 
 static void xtest_pkcs11_test_1013(ADBG_Case_t *c)
 {
@@ -3381,14 +3357,8 @@ close_lib:
 	ADBG_EXPECT_CK_OK(c, close_lib());
 
 }
-
-ZTEST(pkcs11_1000, test_1013)
-{
-	ADBG_STRUCT_DECLARE("PKCS11: Object creation upon session type");
-
-	xtest_pkcs11_test_1013(&c);
-	ADBG_Assert(&c);
-}
+ADBG_CASE_DEFINE(pkcs11, 1013, xtest_pkcs11_test_1013,
+		 "PKCS11: Object creation upon session type");
 
 static void xtest_pkcs11_test_1014(ADBG_Case_t *c)
 {
@@ -3604,14 +3574,8 @@ close_session:
 close_lib:
 	ADBG_EXPECT_CK_OK(c, close_lib());
 }
-
-ZTEST(pkcs11_1000, test_1014)
-{
-	ADBG_STRUCT_DECLARE("PKCS11: Test C_SetAttributeValue()");
-
-	xtest_pkcs11_test_1014(&c);
-	ADBG_Assert(&c);
-}
+ADBG_CASE_DEFINE(pkcs11, 1014, xtest_pkcs11_test_1014,
+		 "PKCS11: Test C_SetAttributeValue()");
 
 static void xtest_pkcs11_test_1015(ADBG_Case_t *c)
 {
@@ -3971,14 +3935,8 @@ close_session:
 close_lib:
 	ADBG_EXPECT_CK_OK(c, close_lib());
 }
-
-ZTEST(pkcs11_1000, test_1015)
-{
-	ADBG_STRUCT_DECLARE("PKCS11: Test C_CopyObject()");
-
-	xtest_pkcs11_test_1015(&c);
-	ADBG_Assert(&c);
-}
+ADBG_CASE_DEFINE(pkcs11, 1015, xtest_pkcs11_test_1015,
+		 "PKCS11: Test C_CopyObject()");
 
 static void xtest_pkcs11_test_1016(ADBG_Case_t *c)
 {
@@ -4066,14 +4024,8 @@ out:
 close_lib:
 	ADBG_EXPECT_CK_OK(c, close_lib());
 }
-
-ZTEST(pkcs11_1000, test_1016)
-{
-	ADBG_STRUCT_DECLARE("PKCS11: Random number generator tests");
-
-	xtest_pkcs11_test_1016(&c);
-	ADBG_Assert(&c);
-}
+ADBG_CASE_DEFINE(pkcs11, 1016, xtest_pkcs11_test_1016,
+		 "PKCS11: Random number generator tests");
 
 static CK_RV derive_sym_key(CK_SESSION_HANDLE session,
 			    CK_OBJECT_HANDLE parent_key,
@@ -4512,14 +4464,8 @@ close_session:
 close_lib:
 	ADBG_EXPECT_CK_OK(c, close_lib());
 }
-
-ZTEST(pkcs11_1000, test_1017)
-{
-	ADBG_STRUCT_DECLARE("PKCS11: AES Key Derivation tests");
-
-	xtest_pkcs11_test_1017(&c);
-	ADBG_Assert(&c);
-}
+ADBG_CASE_DEFINE(pkcs11, 1017, xtest_pkcs11_test_1017,
+		 "PKCS11: AES Key Derivation tests");
 
 /* Digest test patterns */
 static const char digest_test_pattern[] = "The quick brown fox jumps over the lazy dog";
@@ -4881,7 +4827,7 @@ static void xtest_pkcs11_test_1018(ADBG_Case_t *c)
 	if (!ADBG_EXPECT_BUFFER(c, hash, md_len, digest, digest_size))
 		goto out;
 #else
-	printk("OpenSSL not available, skipping C_DigestKey verification");
+	Do_ADBG_Log("OpenSSL not available, skipping C_DigestKey verification");
 #endif
 
 	ADBG_EXPECT_CK_OK(c, C_DestroyObject(session, key_handle));
@@ -4960,7 +4906,7 @@ static void xtest_pkcs11_test_1018(ADBG_Case_t *c)
 	if (!ADBG_EXPECT_BUFFER(c, hash, md_len, digest, digest_size))
 		goto out;
 #else
-	printk("OpenSSL not available, skipping C_DigestKey verification");
+	Do_ADBG_Log("OpenSSL not available, skipping C_DigestKey verification");
 #endif
 
 	ADBG_EXPECT_CK_OK(c, C_DestroyObject(session, key_handle));
@@ -5327,14 +5273,8 @@ out:
 close_lib:
 	ADBG_EXPECT_CK_OK(c, close_lib());
 }
-
-ZTEST(pkcs11_1000, test_1018)
-{
-	ADBG_STRUCT_DECLARE("PKCS11: Digest tests");
-
-	xtest_pkcs11_test_1018(&c);
-	ADBG_Assert(&c);
-}
+ADBG_CASE_DEFINE(pkcs11, 1018, xtest_pkcs11_test_1018,
+		 "PKCS11: Digest tests");
 
 /**
  *    0:d=0  hl=2 l=  22 cons: SEQUENCE
@@ -5703,13 +5643,2157 @@ out:
 close_lib:
 	ADBG_EXPECT_CK_OK(c, close_lib());
 }
+ADBG_CASE_DEFINE(pkcs11, 1019, xtest_pkcs11_test_1019,
+		 "PKCS11: Elliptic Curve key generation and signing");
 
-ZTEST(pkcs11_1000, test_1019)
+#define WRAPPED_TEST_KEY_SIZE	48
+
+static void xtest_pkcs11_test_1020(ADBG_Case_t *c)
 {
-	ADBG_STRUCT_DECLARE("PKCS11: Elliptic Curve key generation and signing");
+	CK_RV rv = CKR_GENERAL_ERROR;
+	CK_SLOT_ID slot = 0;
+	CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+	CK_FLAGS session_flags = CKF_SERIAL_SESSION | CKF_RW_SESSION;
+	CK_OBJECT_HANDLE wrapping_key1 = CK_INVALID_HANDLE;
+	CK_OBJECT_HANDLE wrapping_key2 = CK_INVALID_HANDLE;
+	CK_OBJECT_HANDLE wrapping_key_inv = CK_INVALID_HANDLE;
+	CK_OBJECT_HANDLE key = CK_INVALID_HANDLE;
+	CK_OBJECT_HANDLE key_sz24 = CK_INVALID_HANDLE;
+	CK_OBJECT_HANDLE key_sens = CK_INVALID_HANDLE;
+	CK_OBJECT_HANDLE key_inv = CK_INVALID_HANDLE;
+	CK_OBJECT_HANDLE unwrapped_key = CK_INVALID_HANDLE;
+	CK_ATTRIBUTE set_w_unw_template[] = {
+		{ CKA_WRAP, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_UNWRAP, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+	};
+	CK_ATTRIBUTE set_wwt_template[] = {
+		{ CKA_WRAP_WITH_TRUSTED, &(CK_BBOOL){ CK_TRUE },
+		  sizeof(CK_BBOOL) },
+	};
+	CK_ATTRIBUTE set_trusted_template[] = {
+		{ CKA_TRUSTED, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+	};
+	CK_ATTRIBUTE wrap_template[] = {
+		{ CKA_SENSITIVE, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+	};
+	CK_ATTRIBUTE unwrap_template[] = {
+		{ CKA_SENSITIVE, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+	};
+	CK_ATTRIBUTE wrapping_key_template[] = {
+		{ CKA_VALUE_LEN, &(CK_ULONG){ 16 }, sizeof(CK_ULONG) },
+		{ CKA_WRAP, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_UNWRAP, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_SENSITIVE, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_EXTRACTABLE, &(CK_BBOOL){ CK_FALSE }, sizeof(CK_BBOOL) },
+	};
+	CK_ATTRIBUTE wrapping_key_temp_w_indirect[] = {
+		{ CKA_VALUE_LEN, &(CK_ULONG){ 16 }, sizeof(CK_ULONG) },
+		{ CKA_WRAP, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_UNWRAP, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_WRAP_TEMPLATE, &wrap_template, sizeof(wrap_template) },
+		{ CKA_UNWRAP_TEMPLATE, &unwrap_template,
+		  sizeof(unwrap_template) },
+	};
+	CK_ATTRIBUTE unwrap_template2[] = {
+		{ CKA_CLASS, &(CK_OBJECT_CLASS){ CKO_SECRET_KEY },
+		  sizeof(CK_OBJECT_CLASS) },
+		{ CKA_KEY_TYPE,	&(CK_KEY_TYPE){ CKK_AES }, sizeof(CK_KEY_TYPE) },
+		{ CKA_TOKEN, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_EXTRACTABLE, &(CK_BBOOL){ CK_FALSE }, sizeof(CK_BBOOL) },
+		{ CKA_VALUE_LEN, &(CK_ULONG){ 16 }, sizeof(CK_ULONG) },
+	};
+	CK_ATTRIBUTE wrapping_key_temp_w_indirect2[] = {
+		{ CKA_VALUE_LEN, &(CK_ULONG){ 16 }, sizeof(CK_ULONG) },
+		{ CKA_WRAP, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_UNWRAP, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_UNWRAP_TEMPLATE, &unwrap_template2,
+		  sizeof(unwrap_template2) },
+	};
+	CK_ATTRIBUTE wrapping_key_template_inv1[] = {
+		{ CKA_VALUE_LEN, &(CK_ULONG){ 16 }, sizeof(CK_ULONG) },
+		{ CKA_WRAP, &(CK_BBOOL){ CK_FALSE }, sizeof(CK_BBOOL) },
+	};
+	CK_ATTRIBUTE key_template[] = {
+		{ CKA_VALUE_LEN, &(CK_ULONG){ 16 }, sizeof(CK_ULONG) },
+		{ CKA_ENCRYPT, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_DECRYPT, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_EXTRACTABLE, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+	};
+	CK_ATTRIBUTE key_template_sens[] = {
+		{ CKA_VALUE_LEN, &(CK_ULONG){ 16 }, sizeof(CK_ULONG) },
+		{ CKA_EXTRACTABLE, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_SENSITIVE, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+	};
+	CK_ATTRIBUTE key_template_inv1[] = {
+		{ CKA_VALUE_LEN, &(CK_ULONG){ 16 }, sizeof(CK_ULONG) },
+		{ CKA_EXTRACTABLE, &(CK_BBOOL){ CK_FALSE }, sizeof(CK_BBOOL) },
+	};
+	CK_ATTRIBUTE key_sz24_template[] = {
+		{ CKA_VALUE_LEN, &(CK_ULONG){ 24 }, sizeof(CK_ULONG) },
+		{ CKA_EXTRACTABLE, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+	};
+	CK_ATTRIBUTE new_key_template[] = {
+		{ CKA_CLASS, &(CK_OBJECT_CLASS){ CKO_SECRET_KEY },
+		  sizeof(CK_OBJECT_CLASS) },
+		{ CKA_KEY_TYPE,	&(CK_KEY_TYPE){ CKK_GENERIC_SECRET },
+		  sizeof(CK_KEY_TYPE) },
+		{ CKA_ENCRYPT, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_DECRYPT, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_EXTRACTABLE, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_SENSITIVE, &(CK_BBOOL){ CK_FALSE}, sizeof(CK_BBOOL) },
+	};
+	CK_ATTRIBUTE new_key_template_sens[] = {
+		{ CKA_CLASS, &(CK_OBJECT_CLASS){ CKO_SECRET_KEY },
+		  sizeof(CK_OBJECT_CLASS) },
+		{ CKA_KEY_TYPE,	&(CK_KEY_TYPE){ CKK_AES }, sizeof(CK_KEY_TYPE) },
+		{ CKA_EXTRACTABLE, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_SENSITIVE, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+	};
+	CK_ATTRIBUTE new_key_template2[] = {
+		{ CKA_DERIVE, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+	};
+	CK_ATTRIBUTE new_key_template3[] = {
+		{ CKA_VALUE_LEN, &(CK_ULONG){ 16 }, sizeof(CK_ULONG) },
+		{ CKA_PRIVATE, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+	};
+	CK_ATTRIBUTE new_key_template4[] = {
+		{ CKA_CLASS, &(CK_OBJECT_CLASS){ CKO_SECRET_KEY },
+		  sizeof(CK_OBJECT_CLASS) },
+		{ CKA_KEY_TYPE,	&(CK_KEY_TYPE){ CKK_GENERIC_SECRET },
+		  sizeof(CK_KEY_TYPE) },
+		{ CKA_PRIVATE, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+	};
+	CK_BBOOL g_extract = CK_FALSE;
+	CK_BBOOL g_sensitive = CK_TRUE;
+	CK_BBOOL g_nextract = CK_TRUE;
+	CK_BBOOL g_asensitive = CK_TRUE;
+	CK_BBOOL g_local = CK_TRUE;
+	CK_BBOOL g_token = CK_FALSE;
+	CK_BBOOL g_derive = CK_FALSE;
+	CK_OBJECT_CLASS g_class = CKO_VENDOR_DEFINED;
+	CK_KEY_TYPE g_key_type = CKK_VENDOR_DEFINED;
+	uint8_t g_val[WRAPPED_TEST_KEY_SIZE] = { 0 };
+	CK_ULONG key_len = 0;
+	uint8_t g_unwrapped_val[WRAPPED_TEST_KEY_SIZE] = { 0 };
+	CK_ULONG unwrapped_key_len = 0;
+	/* Keep last attribute as CKA_VALUE */
+	CK_ATTRIBUTE get_template_unwrapped[] = {
+		{ CKA_CLASS, &g_class, sizeof(CK_OBJECT_CLASS) },
+		{ CKA_KEY_TYPE,	&g_key_type, sizeof(CK_KEY_TYPE) },
+		{ CKA_EXTRACTABLE, &g_extract, sizeof(CK_BBOOL) },
+		{ CKA_SENSITIVE, &g_sensitive, sizeof(CK_BBOOL) },
+		{ CKA_NEVER_EXTRACTABLE, &g_nextract, sizeof(CK_BBOOL) },
+		{ CKA_ALWAYS_SENSITIVE, &g_asensitive, sizeof(CK_BBOOL) },
+		{ CKA_LOCAL, &g_local, sizeof(CK_BBOOL) },
+		{ CKA_TOKEN, &g_token, sizeof(CK_BBOOL) },
+		{ CKA_DERIVE, &g_derive, sizeof(CK_BBOOL) },
+		{ CKA_VALUE_LEN, &unwrapped_key_len,
+		  sizeof(unwrapped_key_len) },
+		{ CKA_VALUE, g_unwrapped_val, sizeof(g_unwrapped_val) },
+	};
+	CK_ATTRIBUTE get_template[] = {
+		{ CKA_VALUE_LEN, &key_len, sizeof(key_len) },
+		{ CKA_VALUE, g_val, sizeof(g_val) },
+	};
+	uint8_t buf[WRAPPED_TEST_KEY_SIZE] = { 0 };
+	CK_ULONG size = 0;
 
-	xtest_pkcs11_test_1019(&c);
-	ADBG_Assert(&c);
+	rv = init_lib_and_find_token_slot(&slot);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		return;
+
+	rv = init_test_token(slot);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto close_lib;
+
+	rv = init_user_test_token(slot);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto close_lib;
+
+	rv = C_OpenSession(slot, session_flags, NULL, 0, &session);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto close_lib;
+
+	/* Wrapping Key - AES Key */
+	rv = C_GenerateKey(session, &cktest_aes_keygen_mechanism,
+			   wrapping_key_template,
+			   ARRAY_SIZE(wrapping_key_template), &wrapping_key1);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto close_session;
+
+	/* Key to be wrapped - AES key */
+	rv = C_GenerateKey(session, &cktest_aes_keygen_mechanism,
+			   key_template, ARRAY_SIZE(key_template),
+			   &key);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto close_session;
+
+	Do_ADBG_BeginSubCase(c, "Test key wrap with AES ECB");
+
+	/*
+	 * Test NULL buffer and NULL out_size to verify bad argument processing
+	 */
+	rv = C_WrapKey(session, &cktest_aes_ecb_mechanism, wrapping_key1, key,
+		       NULL, NULL);
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_ARGUMENTS_BAD, rv))
+		goto out;
+
+	/*
+	 * Test NULL buffer case with size as 0 to get the out_size
+	 */
+	rv = C_WrapKey(session, &cktest_aes_ecb_mechanism, wrapping_key1, key,
+		       NULL, &size);
+	if (!ADBG_EXPECT_CK_OK(c, rv) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, size, <=, sizeof(buf)))
+		goto out;
+
+	/*
+	 * Test NULL buffer case with size non zero size to get the out_size
+	 */
+	size = 1;
+	rv = C_WrapKey(session, &cktest_aes_ecb_mechanism, wrapping_key1, key,
+		       NULL, &size);
+	if (!ADBG_EXPECT_CK_OK(c, rv) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, size, <=, sizeof(buf)))
+		goto out;
+
+	/* Test short buffer */
+	size = 12;
+	rv = C_WrapKey(session, &cktest_aes_ecb_mechanism, wrapping_key1, key,
+		       buf, &size);
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_BUFFER_TOO_SMALL, rv) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, size, <=, sizeof(buf)))
+		goto out;
+
+	rv = C_WrapKey(session, &cktest_aes_ecb_mechanism, wrapping_key1, key,
+		       buf, &size);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto out;
+
+	/*
+	 * Get the size of the original key which was wrapped in key_len.
+	 * This will be compared to the length of the key after unwrapping.
+	 */
+	rv = C_GetAttributeValue(session, key, get_template,
+				 ARRAY_SIZE(get_template));
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto out;
+
+	Do_ADBG_EndSubCase(c, NULL);
+
+	Do_ADBG_BeginSubCase(c, "Test key unwrap with AES ECB");
+
+	rv = C_UnwrapKey(session, &cktest_aes_ecb_mechanism, wrapping_key1, buf,
+			 size, new_key_template, ARRAY_SIZE(new_key_template),
+			 &unwrapped_key);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto out;
+
+	/*
+	 * The key created after unwrapping should have CKA_LOCAL = FALSE,
+	 * CKA_ALWAYS_SENSITIVE and CKA_NEVER_EXTRACTABLE as FALSE.
+	 * Default value of CKA_EXTRACTABLE if not specified in the template
+	 * is TRUE. We have deliberately set CKA_SENSITIVE to false for
+	 * both original key and unwrapped_key. This is done to be able to
+	 * extract the value of keys and compare them. This is done mainly
+	 * for testing. In actual examples, we expect CKA_SENSITIVE of keys
+	 * to be wrapped to be TRUE.
+	 */
+	rv = C_GetAttributeValue(session, unwrapped_key, get_template_unwrapped,
+				 ARRAY_SIZE(get_template_unwrapped));
+	if (!ADBG_EXPECT_CK_OK(c, rv) ||
+	    !ADBG_EXPECT_BUFFER(c, g_unwrapped_val, unwrapped_key_len, g_val,
+				key_len) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_class, ==, CKO_SECRET_KEY) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_key_type, ==,
+					  CKK_GENERIC_SECRET) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_local, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_sensitive, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_extract, ==, CK_TRUE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_asensitive, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_nextract, ==, CK_FALSE))
+		goto out;
+
+	rv = C_DestroyObject(session, unwrapped_key);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto out;
+
+	Do_ADBG_EndSubCase(c, NULL);
+
+	Do_ADBG_BeginSubCase(c, "Invalid UnWrap cases");
+
+	/* Failure when unwrapping as a private session key */
+	rv = C_UnwrapKey(session, &cktest_aes_ecb_mechanism, wrapping_key1, buf,
+			 size, new_key_template4, ARRAY_SIZE(new_key_template4),
+			 &unwrapped_key);
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_USER_NOT_LOGGED_IN, rv))
+		goto out;
+
+	/* Provide incomplete template */
+	rv = C_UnwrapKey(session, &cktest_aes_ecb_mechanism, wrapping_key1, buf,
+			 size, new_key_template2, ARRAY_SIZE(new_key_template2),
+			 &unwrapped_key);
+
+	/*
+	 * The error code can also be CKR_TEMPLATE_INCOMPLETE. The
+	 * current implementation returns CKR_TEMPLATE_INCONSISTENT
+	 */
+	if (!ADBG_EXPECT_TRUE(c, rv == CKR_TEMPLATE_INCOMPLETE ||
+				 rv == CKR_TEMPLATE_INCONSISTENT))
+		goto out;
+
+	/* Try unwrapping with a key without CKA_UNWRAP */
+	rv = C_UnwrapKey(session, &cktest_aes_ecb_mechanism, key, buf, size,
+			 new_key_template, ARRAY_SIZE(new_key_template),
+			 &unwrapped_key);
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT, rv))
+		goto out;
+
+	Do_ADBG_EndSubCase(c, NULL);
+
+	Do_ADBG_BeginSubCase(c, "Invalid Wrap cases");
+
+	rv = C_GenerateKey(session, &cktest_aes_keygen_mechanism,
+			   wrapping_key_template_inv1,
+			   ARRAY_SIZE(wrapping_key_template_inv1),
+			   &wrapping_key_inv);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto out;
+
+	/* Wrapping key used without CKA_WRAP set */
+	rv = C_WrapKey(session, &cktest_aes_ecb_mechanism, wrapping_key_inv,
+		       key, buf, &size);
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_WRAPPING_KEY_TYPE_INCONSISTENT, rv))
+		goto out;
+
+	rv = C_DestroyObject(session, wrapping_key_inv);
+	ADBG_EXPECT_CK_OK(c, rv);
+
+	/* Use invalid wrapping key handle */
+	rv = C_WrapKey(session, &cktest_aes_ecb_mechanism, wrapping_key_inv,
+		       key, buf, &size);
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_WRAPPING_KEY_HANDLE_INVALID, rv))
+		goto out;
+
+	/* CKA_EXTRACTABLE attribute of the key to be wrapped is CKA_FALSE */
+	rv = C_GenerateKey(session, &cktest_aes_keygen_mechanism,
+			   key_template_inv1, ARRAY_SIZE(key_template_inv1),
+			   &key_inv);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto out;
+
+	rv = C_WrapKey(session, &cktest_aes_ecb_mechanism, wrapping_key1,
+		       key_inv, buf, &size);
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_KEY_UNEXTRACTABLE, rv))
+		goto out;
+
+	rv = C_DestroyObject(session, key_inv);
+	ADBG_EXPECT_CK_OK(c, rv);
+
+	/* Use invalid key handle */
+	rv = C_WrapKey(session, &cktest_aes_ecb_mechanism, wrapping_key1,
+		       key_inv, buf, &size);
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_KEY_HANDLE_INVALID, rv))
+		goto out;
+
+	/* Try wrapping the wrapping key */
+	rv = C_WrapKey(session, &cktest_aes_ecb_mechanism, wrapping_key1,
+		       wrapping_key1, buf, &size);
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_WRAPPING_KEY_HANDLE_INVALID, rv))
+		goto out;
+
+	/* Use invalid mechanism */
+	rv = C_WrapKey(session, &cktest_hmac_md5_mechanism, wrapping_key1, key,
+		       buf, &size);
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_MECHANISM_INVALID, rv))
+		goto out;
+
+	/* Try wrapping when an operation is already active */
+	rv = C_EncryptInit(session, &cktest_aes_cbc_mechanism, key);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto out;
+
+	rv = C_WrapKey(session, &cktest_aes_ecb_mechanism, wrapping_key1, key,
+		       buf, &size);
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_OPERATION_ACTIVE, rv))
+		goto out;
+
+	rv = C_EncryptFinal(session, NULL, NULL);
+	/* Only check that the operation is no more active */
+	if (!ADBG_EXPECT_TRUE(c, rv != CKR_BUFFER_TOO_SMALL))
+		goto out;
+
+	/*
+	 * Try wrapping using CKK_GENERIC_SECRET when mechanism used is
+	 * AES_ECB. Generate a secret key object in rw session.
+	 */
+	rv = C_GenerateKey(session, &cktest_gensecret_keygen_mechanism,
+			   cktest_generate_gensecret_object_valid1,
+			   ARRAY_SIZE(cktest_generate_gensecret_object_valid1),
+			   &key_inv);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto out;
+
+	/* Make the Generic secret key wrapping/unwrapping key */
+	rv = C_SetAttributeValue(session, key_inv, set_w_unw_template,
+				 ARRAY_SIZE(set_w_unw_template));
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto out;
+
+	rv = C_WrapKey(session, &cktest_aes_ecb_mechanism, key_inv, key, buf,
+		       &size);
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_WRAPPING_KEY_TYPE_INCONSISTENT, rv))
+		goto out;
+
+	rv = C_DestroyObject(session, key_inv);
+	ADBG_EXPECT_CK_OK(c, rv);
+
+	Do_ADBG_EndSubCase(c, NULL);
+
+	Do_ADBG_BeginSubCase(c, "Wrap with different length key");
+
+	/* Generate Key of size 192 bits */
+	rv = C_GenerateKey(session, &cktest_aes_keygen_mechanism,
+			   key_sz24_template, ARRAY_SIZE(key_sz24_template),
+			   &key_sz24);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto out;
+
+	size = 0;
+	rv = C_WrapKey(session, &cktest_aes_ecb_mechanism, wrapping_key1,
+		       key_sz24, buf, &size);
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_BUFFER_TOO_SMALL, rv) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, size, ==, 32))
+		goto out;
+
+	size = 24;
+	rv = C_WrapKey(session, &cktest_aes_ecb_mechanism, wrapping_key1,
+		       key_sz24, buf, &size);
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_BUFFER_TOO_SMALL, rv) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, size, ==, 32))
+		goto out;
+
+	rv = C_WrapKey(session, &cktest_aes_ecb_mechanism, wrapping_key1,
+		       key_sz24, buf, &size);
+	if (!ADBG_EXPECT_CK_OK(c, rv) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, size, ==, 32))
+		goto out;
+
+	Do_ADBG_EndSubCase(c, NULL);
+
+	Do_ADBG_BeginSubCase(c, "Test Wrap/Unwrap with indirect template");
+
+	/* Wrapping Key with indirect templates - AES Key */
+	rv = C_GenerateKey(session, &cktest_aes_keygen_mechanism,
+			   wrapping_key_temp_w_indirect,
+			   ARRAY_SIZE(wrapping_key_temp_w_indirect),
+			   &wrapping_key2);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto out;
+
+	/*
+	 * Attribute mismatch with CKA_WRAP_TEMPLATE.
+	 * Error expected when wrapping a key whose template doesn't match with
+	 * the CKA_WRAP_TEMPLATE in the wrapping_key. In this example, the
+	 * CKA_WRAP_TEMPLATE expects CKA_SENSITIVE of the key to be wrapped to
+	 * be TRUE which is not the case here.
+	 */
+	size = sizeof(buf);
+	rv = C_WrapKey(session, &cktest_aes_ecb_mechanism, wrapping_key2, key,
+		       buf, &size);
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_KEY_HANDLE_INVALID, rv))
+		goto out;
+
+	/* Generate SENSITIVE Key */
+	rv = C_GenerateKey(session, &cktest_aes_keygen_mechanism,
+			   key_template_sens, ARRAY_SIZE(key_template_sens),
+			   &key_sens);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto out;
+
+	rv = C_WrapKey(session, &cktest_aes_ecb_mechanism, wrapping_key2,
+		       key_sens, buf, &size);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto out;
+
+	/*
+	 * Unwrap to create key with SENSITIVE set as FALSE.
+	 * This should fail as indirect attribute CKA_UNWRAP_TEMPLATE restricts
+	 * creation of key with CKA_SENSITIVE as FALSE.
+	 */
+	rv = C_UnwrapKey(session, &cktest_aes_ecb_mechanism, wrapping_key2, buf,
+			 size, new_key_template, ARRAY_SIZE(new_key_template),
+			 &unwrapped_key);
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_TEMPLATE_INCONSISTENT, rv))
+		goto out;
+
+	/* Unwrap a wrapped sensitive key to create a SENSITIVE key */
+	rv = C_UnwrapKey(session, &cktest_aes_ecb_mechanism, wrapping_key2, buf,
+			 size, new_key_template_sens,
+			 ARRAY_SIZE(new_key_template_sens), &unwrapped_key);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto out;
+
+	/*
+	 * Get the attributes of created. Skip last attribute in
+	 * get_template_wrapped as that is CKA_VALUE which would give an
+	 * error for a sensitive key
+	 */
+	rv = C_GetAttributeValue(session, unwrapped_key, get_template_unwrapped,
+				 ARRAY_SIZE(get_template_unwrapped) - 1);
+	if (!ADBG_EXPECT_CK_OK(c, rv) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, unwrapped_key_len, ==, key_len) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_class, ==, CKO_SECRET_KEY) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_key_type, ==, CKK_AES) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_local, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_sensitive, ==, CK_TRUE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_extract, ==, CK_TRUE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_asensitive, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_nextract, ==, CK_FALSE))
+		goto out;
+
+	if (!ADBG_EXPECT_CK_OK(c, C_DestroyObject(session, unwrapped_key)) ||
+	    !ADBG_EXPECT_CK_OK(c, C_DestroyObject(session, wrapping_key2)) ||
+	    !ADBG_EXPECT_CK_OK(c, C_DestroyObject(session, key_sens)))
+		goto out;
+
+	/* Create wrapping key with indirect template specifying class & key */
+	rv = C_GenerateKey(session, &cktest_aes_keygen_mechanism,
+			   wrapping_key_temp_w_indirect2,
+			   ARRAY_SIZE(wrapping_key_temp_w_indirect2),
+			   &wrapping_key2);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto out;
+
+	size = sizeof(buf);
+	rv = C_WrapKey(session, &cktest_aes_ecb_mechanism, wrapping_key2, key,
+		       buf, &size);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto out;
+
+	/* Use minimal new key template just specifying attribute of key */
+	rv = C_UnwrapKey(session, &cktest_aes_ecb_mechanism, wrapping_key2, buf,
+			 size, new_key_template2, ARRAY_SIZE(new_key_template2),
+			 &unwrapped_key);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto out;
+
+	rv = C_GetAttributeValue(session, unwrapped_key, get_template_unwrapped,
+				 ARRAY_SIZE(get_template_unwrapped) - 1);
+
+	/* Destroy created token object */
+	if (!ADBG_EXPECT_CK_OK(c, C_DestroyObject(session, unwrapped_key)))
+		goto out;
+
+	if (!ADBG_EXPECT_CK_OK(c, rv) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, unwrapped_key_len, ==, key_len) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_class, ==, CKO_SECRET_KEY) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_key_type, ==, CKK_AES) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_local, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_token, ==, CK_TRUE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_derive, ==, CK_TRUE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_sensitive, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_extract, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_asensitive, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_nextract, ==, CK_FALSE))
+		goto out;
+
+	/*
+	 * Unwrap with NULL template when CKA_UNWRAP_TEMPLATE has all
+	 * attributes to generate a key
+	 */
+	rv = C_UnwrapKey(session, &cktest_aes_ecb_mechanism, wrapping_key2, buf,
+			 size, NULL, 0, &unwrapped_key);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto out;
+
+	rv = C_GetAttributeValue(session, unwrapped_key, get_template_unwrapped,
+				 ARRAY_SIZE(get_template_unwrapped) - 1);
+
+	/* Destroy created token object */
+	if (!ADBG_EXPECT_CK_OK(c, C_DestroyObject(session, unwrapped_key)))
+		goto out;
+
+	if (!ADBG_EXPECT_CK_OK(c, rv) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, unwrapped_key_len, ==, key_len) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_class, ==, CKO_SECRET_KEY) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_key_type, ==, CKK_AES) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_local, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_token, ==, CK_TRUE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_derive, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_sensitive, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_extract, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_asensitive, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_nextract, ==, CK_FALSE)) {
+		goto out;
+	}
+
+	/* Unwrap and try create a Private token object */
+	rv = C_UnwrapKey(session, &cktest_aes_ecb_mechanism, wrapping_key2, buf,
+			 size, new_key_template3, ARRAY_SIZE(new_key_template3),
+			 &unwrapped_key);
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_USER_NOT_LOGGED_IN, rv))
+		goto out;
+
+	Do_ADBG_EndSubCase(c, NULL);
+
+	Do_ADBG_BeginSubCase(c, "Test usage of CKA_WRAP_WITH_TRUSTED");
+
+	/* Set Attribute WRAP_WITH_TRUSTED on the key */
+	rv = C_SetAttributeValue(session, key, set_wwt_template,
+				 ARRAY_SIZE(set_wwt_template));
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto out;
+
+	/*
+	 * Try wrapping the key with attribute CKA_WRAP_WITH_TRUSTED with
+	 * normal wrapping key
+	 */
+	rv = C_WrapKey(session, &cktest_aes_ecb_mechanism, wrapping_key1, key,
+		       buf, &size);
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_KEY_NOT_WRAPPABLE, rv))
+		goto out;
+
+	/* Login as SO in RW session */
+	rv = C_Login(session, CKU_SO, test_token_so_pin,
+		     sizeof(test_token_so_pin));
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto out;
+
+	rv = C_SetAttributeValue(session, wrapping_key1, set_trusted_template,
+				 ARRAY_SIZE(set_trusted_template));
+	if (!ADBG_EXPECT_CK_OK(c, rv) ||
+	    !ADBG_EXPECT_CK_OK(c, C_Logout(session)))
+		goto out;
+
+	rv = C_WrapKey(session, &cktest_aes_ecb_mechanism, wrapping_key1, key,
+		       buf, &size);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto out;
+
+out:
+	Do_ADBG_EndSubCase(c, NULL);
+close_session:
+	ADBG_EXPECT_CK_OK(c, C_CloseSession(session));
+
+close_lib:
+	ADBG_EXPECT_CK_OK(c, close_lib());
+}
+ADBG_CASE_DEFINE(pkcs11, 1020, xtest_pkcs11_test_1020,
+		 "PKCS11: AES Key Wrap/UnWrap tests");
+
+#define RSA_SIGN_TEST(_test_name, _mecha, _data) \
+	{ \
+		.test_name = _test_name, \
+		.mecha = _mecha, \
+		.data = _data, \
+		.data_size = sizeof(_data) - 1, \
+	}
+
+/* List of RSA PKCS signing multi stage digest mechanisms */
+static struct {
+	const char *test_name;
+	CK_MECHANISM_TYPE mecha;
+	const void *data;
+	CK_ULONG data_size;
+} rsa_pkcs_sign_tests[] = {
+#ifndef CFG_CRYPTO_SE05X
+	RSA_SIGN_TEST("CKM_MD5_RSA_PKCS", CKM_MD5_RSA_PKCS,
+		      digest_test_pattern),
+#endif
+	RSA_SIGN_TEST("CKM_SHA1_RSA_PKCS", CKM_SHA1_RSA_PKCS,
+		      digest_test_pattern),
+	RSA_SIGN_TEST("CKM_SHA224_RSA_PKCS", CKM_SHA224_RSA_PKCS,
+		      digest_test_pattern),
+	RSA_SIGN_TEST("CKM_SHA256_RSA_PKCS", CKM_SHA256_RSA_PKCS,
+		      digest_test_pattern),
+	RSA_SIGN_TEST("CKM_SHA384_RSA_PKCS", CKM_SHA384_RSA_PKCS,
+		      digest_test_pattern),
+	RSA_SIGN_TEST("CKM_SHA512_RSA_PKCS", CKM_SHA512_RSA_PKCS,
+		      digest_test_pattern),
+};
+
+static int test_rsa_pkcs_operations(ADBG_Case_t *c,
+				    CK_SESSION_HANDLE session,
+				    const char *rsa_name, uint32_t rsa_bits)
+{
+	CK_RV rv = CKR_GENERAL_ERROR;
+
+	CK_OBJECT_HANDLE public_key = CK_INVALID_HANDLE;
+	CK_OBJECT_HANDLE private_key = CK_INVALID_HANDLE;
+
+	CK_MECHANISM mechanism = {
+		CKM_RSA_PKCS_KEY_PAIR_GEN, NULL, 0
+	};
+	CK_MECHANISM sign_mechanism = {
+		CKM_RSA_PKCS, NULL, 0
+	};
+	CK_ULONG modulus_bits = 0;
+	CK_BYTE public_exponent[] = { 1, 0, 1 };
+	CK_BYTE id[] = { 123 };
+
+	CK_ATTRIBUTE public_key_template[] = {
+		{ CKA_ENCRYPT, &(CK_BBOOL){ CK_FALSE }, sizeof(CK_BBOOL) },
+		{ CKA_VERIFY, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_WRAP, &(CK_BBOOL){ CK_FALSE }, sizeof(CK_BBOOL) },
+		{ CKA_MODULUS_BITS, &modulus_bits, sizeof(CK_ULONG) },
+		{ CKA_PUBLIC_EXPONENT, public_exponent,
+		  sizeof(public_exponent) }
+	};
+
+	CK_ATTRIBUTE private_key_template[] = {
+		{ CKA_TOKEN, &(CK_BBOOL){ CK_FALSE }, sizeof(CK_BBOOL) },
+		{ CKA_PRIVATE, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_SUBJECT, subject_common_name,
+		  sizeof(subject_common_name) },
+		{ CKA_ID, id, sizeof(id) },
+		{ CKA_SENSITIVE, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_DECRYPT, &(CK_BBOOL){ CK_FALSE }, sizeof(CK_BBOOL) },
+		{ CKA_SIGN, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_UNWRAP, &(CK_BBOOL){ CK_FALSE }, sizeof(CK_BBOOL) }
+	};
+
+	CK_OBJECT_CLASS g_class = 0;
+	CK_KEY_TYPE g_key_type = 0;
+	CK_BYTE g_id[32] = { 0 };
+	CK_DATE g_start_date = { 0 };
+	CK_DATE g_end_date = { 0 };
+	CK_BBOOL g_derive = CK_FALSE;
+	CK_BBOOL g_local = CK_FALSE;
+	CK_MECHANISM_TYPE g_keygen_mecha = 0;
+	CK_BYTE g_subject[64] = { 0 };
+	CK_BBOOL g_encrypt = CK_FALSE;
+	CK_BBOOL g_verify = CK_FALSE;
+	CK_BBOOL g_verify_recover = CK_FALSE;
+	CK_BBOOL g_wrap = CK_FALSE;
+	CK_BBOOL g_trusted = CK_FALSE;
+	CK_BYTE g_public_key_info[1024] = { 0 };
+	CK_BBOOL g_sensitive = CK_FALSE;
+	CK_BBOOL g_decrypt = CK_FALSE;
+	CK_BBOOL g_sign = CK_FALSE;
+	CK_BBOOL g_sign_recover = CK_FALSE;
+	CK_BBOOL g_unwrap = CK_FALSE;
+	CK_BBOOL g_extract = CK_FALSE;
+	CK_BBOOL g_asensitive = CK_FALSE;
+	CK_BBOOL g_nextract = CK_FALSE;
+	CK_BBOOL g_wrap_with_trusted = CK_FALSE;
+	CK_BBOOL g_always_authenticate = CK_FALSE;
+
+	/* Note: Tests below expects specific order of elements */
+	CK_ATTRIBUTE get_public_template[] = {
+		{ CKA_CLASS, &g_class, sizeof(CK_OBJECT_CLASS) },
+		{ CKA_KEY_TYPE,	&g_key_type, sizeof(CK_KEY_TYPE) },
+		{ CKA_ID, g_id, sizeof(g_id) },
+		{ CKA_START_DATE, &g_start_date, sizeof(CK_DATE) },
+		{ CKA_END_DATE, &g_end_date, sizeof(CK_DATE) },
+		{ CKA_DERIVE, &g_derive, sizeof(CK_BBOOL) },
+		{ CKA_LOCAL, &g_local, sizeof(CK_BBOOL) },
+		{ CKA_KEY_GEN_MECHANISM, &g_keygen_mecha, sizeof(CK_MECHANISM_TYPE) },
+		{ CKA_SUBJECT, g_subject, sizeof(g_subject) },
+		{ CKA_ENCRYPT, &g_encrypt, sizeof(CK_BBOOL) },
+		{ CKA_VERIFY, &g_verify, sizeof(CK_BBOOL) },
+		{ CKA_VERIFY_RECOVER, &g_verify_recover, sizeof(CK_BBOOL) },
+		{ CKA_WRAP, &g_wrap, sizeof(CK_BBOOL) },
+		{ CKA_TRUSTED, &g_trusted, sizeof(CK_BBOOL) },
+		{ CKA_PUBLIC_KEY_INFO, g_public_key_info, sizeof(g_public_key_info) },
+	};
+
+	/* Note: Tests below expects specific order of elements */
+	CK_ATTRIBUTE get_private_template[] = {
+		{ CKA_CLASS, &g_class, sizeof(CK_OBJECT_CLASS) },
+		{ CKA_KEY_TYPE,	&g_key_type, sizeof(CK_KEY_TYPE) },
+		{ CKA_ID, g_id, sizeof(g_id) },
+		{ CKA_START_DATE, &g_start_date, sizeof(CK_DATE) },
+		{ CKA_END_DATE, &g_end_date, sizeof(CK_DATE) },
+		{ CKA_DERIVE, &g_derive, sizeof(CK_BBOOL) },
+		{ CKA_LOCAL, &g_local, sizeof(CK_BBOOL) },
+		{ CKA_KEY_GEN_MECHANISM, &g_keygen_mecha, sizeof(CK_MECHANISM_TYPE) },
+		{ CKA_SUBJECT, g_subject, sizeof(g_subject) },
+		{ CKA_SENSITIVE, &g_sensitive, sizeof(CK_BBOOL) },
+		{ CKA_DECRYPT, &g_decrypt, sizeof(CK_BBOOL) },
+		{ CKA_SIGN, &g_sign, sizeof(CK_BBOOL) },
+		{ CKA_SIGN_RECOVER, &g_sign_recover, sizeof(CK_BBOOL) },
+		{ CKA_UNWRAP, &g_unwrap, sizeof(CK_BBOOL) },
+		{ CKA_EXTRACTABLE, &g_extract, sizeof(CK_BBOOL) },
+		{ CKA_ALWAYS_SENSITIVE, &g_asensitive, sizeof(CK_BBOOL) },
+		{ CKA_NEVER_EXTRACTABLE, &g_nextract, sizeof(CK_BBOOL) },
+		{ CKA_WRAP_WITH_TRUSTED, &g_wrap_with_trusted, sizeof(CK_BBOOL) },
+		{ CKA_ALWAYS_AUTHENTICATE, &g_always_authenticate, sizeof(CK_BBOOL) },
+		{ CKA_PUBLIC_KEY_INFO, g_public_key_info, sizeof(g_public_key_info) },
+	};
+
+	uint8_t signature[512] = { 0 };
+	CK_ULONG signature_len = 0;
+
+	size_t i = 0;
+
+	Do_ADBG_BeginSubCase(c, "%s: Generate key pair", rsa_name);
+
+	modulus_bits = rsa_bits;
+
+	rv = C_GenerateKeyPair(session, &mechanism, public_key_template,
+			       ARRAY_SIZE(public_key_template),
+			       private_key_template,
+			       ARRAY_SIZE(private_key_template),
+			       &public_key, &private_key);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto err;
+
+	/* reset get public key template */
+	memset(g_id, 0, sizeof(g_id));
+	assert(get_public_template[2].type == CKA_ID);
+	get_public_template[2].ulValueLen = sizeof(g_id);
+
+	memset(g_subject, 0, sizeof(g_subject));
+	assert(get_public_template[8].type == CKA_SUBJECT);
+	get_public_template[8].ulValueLen = sizeof(g_subject);
+
+	memset(g_public_key_info, 0, sizeof(g_public_key_info));
+	assert(get_public_template[14].type == CKA_PUBLIC_KEY_INFO);
+	get_public_template[14].ulValueLen = sizeof(g_public_key_info);
+
+	rv = C_GetAttributeValue(session, public_key, get_public_template,
+				 ARRAY_SIZE(get_public_template));
+	if (!ADBG_EXPECT_CK_OK(c, rv) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_class, ==, CKO_PUBLIC_KEY) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_key_type, ==, CKK_RSA) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_derive, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_local, ==, CK_TRUE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_keygen_mecha, ==,
+					  CKM_RSA_PKCS_KEY_PAIR_GEN) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_encrypt, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_verify, ==, CK_TRUE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_verify_recover, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_wrap, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_trusted, ==, CK_FALSE))
+		goto err_destr_obj;
+
+	/* reset get private key template */
+	memset(g_id, 0, sizeof(g_id));
+	assert(get_private_template[2].type == CKA_ID);
+	get_private_template[2].ulValueLen = sizeof(g_id);
+
+	memset(g_subject, 0, sizeof(g_subject));
+	assert(get_private_template[8].type == CKA_SUBJECT);
+	get_private_template[8].ulValueLen = sizeof(g_subject);
+
+	memset(g_public_key_info, 0, sizeof(g_public_key_info));
+	assert(get_private_template[19].type == CKA_PUBLIC_KEY_INFO);
+	get_private_template[19].ulValueLen = sizeof(g_public_key_info);
+
+	rv = C_GetAttributeValue(session, private_key, get_private_template,
+				 ARRAY_SIZE(get_private_template));
+	if (!ADBG_EXPECT_CK_OK(c, rv) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_class, ==, CKO_PRIVATE_KEY) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_key_type, ==, CKK_RSA) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_derive, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_local, ==, CK_TRUE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_keygen_mecha, ==,
+					  CKM_RSA_PKCS_KEY_PAIR_GEN) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_sensitive, ==, CK_TRUE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_decrypt, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_sign, ==, CK_TRUE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_sign_recover, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_unwrap, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_extract, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_asensitive, ==, CK_TRUE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_nextract, ==, CK_TRUE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_wrap_with_trusted, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_always_authenticate, ==, CK_FALSE))
+		goto err_destr_obj;
+
+	Do_ADBG_EndSubCase(c, NULL);
+
+	Do_ADBG_BeginSubCase(c,
+			     "%s: Sign & verify tests - oneshot - CKM_RSA_PKCS",
+			     rsa_name);
+
+	sign_mechanism.mechanism = CKM_RSA_PKCS;
+	memset(signature, 0, sizeof(signature));
+	signature_len = sizeof(signature);
+
+	rv = C_SignInit(session, &sign_mechanism, private_key);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto err_destr_obj;
+
+	rv = C_Sign(session, (void *)digest_test_pattern_sha256,
+		    sizeof(digest_test_pattern_sha256), (void *)signature,
+		    &signature_len);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto err_destr_obj;
+
+	rv = C_VerifyInit(session, &sign_mechanism, public_key);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto err_destr_obj;
+
+	rv = C_Verify(session, (void *)digest_test_pattern_sha256,
+		      sizeof(digest_test_pattern_sha256), (void *)signature,
+		      signature_len);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto err_destr_obj;
+
+	for (i = 0; i < ARRAY_SIZE(rsa_pkcs_sign_tests); i++) {
+		/*
+		 * Note: this order of end/begin here is just to get ADBG
+		 * SubCases in sync with error handling.
+		 */
+		Do_ADBG_EndSubCase(c, NULL);
+
+		Do_ADBG_BeginSubCase(c, "%s: Sign & verify - oneshot - %s",
+				     rsa_name,
+				     rsa_pkcs_sign_tests[i].test_name);
+
+		sign_mechanism.mechanism = rsa_pkcs_sign_tests[i].mecha;
+		memset(signature, 0, sizeof(signature));
+		signature_len = sizeof(signature);
+
+		rv = C_SignInit(session, &sign_mechanism, private_key);
+		if (!ADBG_EXPECT_CK_OK(c, rv))
+			goto err_destr_obj;
+
+		rv = C_Sign(session, (void *)rsa_pkcs_sign_tests[i].data,
+			    rsa_pkcs_sign_tests[i].data_size,
+			    (void *)signature, &signature_len);
+		if (!ADBG_EXPECT_CK_OK(c, rv))
+			goto err_destr_obj;
+
+		rv = C_VerifyInit(session, &sign_mechanism, public_key);
+		if (!ADBG_EXPECT_CK_OK(c, rv))
+			goto err_destr_obj;
+
+		rv = C_Verify(session, (void *)rsa_pkcs_sign_tests[i].data,
+			      rsa_pkcs_sign_tests[i].data_size,
+			      (void *)signature, signature_len);
+		if (!ADBG_EXPECT_CK_OK(c, rv))
+			goto err_destr_obj;
+	}
+
+	rv = C_DestroyObject(session, private_key);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto err_destr_pub_obj;
+
+	rv = C_DestroyObject(session, public_key);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto err;
+
+	Do_ADBG_EndSubCase(c, NULL);
+
+	return 1;
+
+err_destr_obj:
+	ADBG_EXPECT_CK_OK(c, C_DestroyObject(session, private_key));
+err_destr_pub_obj:
+	ADBG_EXPECT_CK_OK(c, C_DestroyObject(session, public_key));
+err:
+	Do_ADBG_EndSubCase(c, NULL);
+
+	return 0;
 }
 
-ZTEST_SUITE(pkcs11_1000, NULL, pkcs11_1000_init, NULL, NULL, pkcs11_1000_deinit);
+static void xtest_pkcs11_test_1021(ADBG_Case_t *c)
+{
+	CK_RV rv = CKR_GENERAL_ERROR;
+	CK_SLOT_ID slot = 0;
+	CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+	CK_FLAGS session_flags = CKF_SERIAL_SESSION | CKF_RW_SESSION;
+	int ret = 0;
+
+	rv = init_lib_and_find_token_slot(&slot);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		return;
+
+	rv = init_test_token(slot);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto close_lib;
+
+	rv = init_user_test_token(slot);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto close_lib;
+
+	rv = C_OpenSession(slot, session_flags, NULL, 0, &session);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto close_lib;
+
+	/* Login to Test Token */
+	rv = C_Login(session, CKU_USER,	test_token_user_pin,
+		     sizeof(test_token_user_pin));
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto out;
+
+	ret = test_rsa_pkcs_operations(c, session, "RSA-1024", 1024);
+	if (!ret)
+		goto out;
+	ret = test_rsa_pkcs_operations(c, session, "RSA-2048", 2048);
+	if (!ret)
+		goto out;
+	if (level > 0) {
+		ret = test_rsa_pkcs_operations(c, session, "RSA-3072", 3072);
+		if (!ret)
+			goto out;
+		ret = test_rsa_pkcs_operations(c, session, "RSA-4096", 4096);
+		if (!ret)
+			goto out;
+	}
+out:
+	ADBG_EXPECT_CK_OK(c, C_CloseSession(session));
+close_lib:
+	ADBG_EXPECT_CK_OK(c, close_lib());
+}
+ADBG_CASE_DEFINE(pkcs11, 1021, xtest_pkcs11_test_1021,
+		 "PKCS11: RSA PKCS key generation and signing");
+
+#define RSA_PSS_HASH_SIGN_TEST(_test_name, _min_rsa_bits, _mecha, _hash_algo, _mgf_algo, \
+			       _salt_len, _data) \
+	{ \
+		.test_name = _test_name, \
+		.min_rsa_bits = _min_rsa_bits, \
+		.mecha = _mecha, \
+		.hash_algo = _hash_algo, \
+		.mgf_algo = _mgf_algo, \
+		.salt_len = _salt_len, \
+		.data = _data, \
+		.data_size = sizeof(_data), \
+	}
+
+#define RSA_PSS_CSTR_SIGN_TEST(_test_name, _min_rsa_bits, _mecha, _hash_algo, \
+			       _mgf_algo, _salt_len, _data) \
+	{ \
+		.test_name = _test_name, \
+		.min_rsa_bits = _min_rsa_bits, \
+		.mecha = _mecha, \
+		.hash_algo = _hash_algo, \
+		.mgf_algo = _mgf_algo, \
+		.salt_len = _salt_len, \
+		.data = _data, \
+		.data_size = sizeof(_data) - 1, \
+	}
+
+/* List of RSA PSS signing multi stage digest mechanisms */
+static struct {
+	const char *test_name;
+	uint32_t min_rsa_bits;
+	CK_MECHANISM_TYPE mecha;
+	CK_MECHANISM_TYPE hash_algo;
+	CK_RSA_PKCS_MGF_TYPE mgf_algo;
+	CK_ULONG salt_len;
+	const void *data;
+	CK_ULONG data_size;
+} rsa_pss_sign_tests[] = {
+	RSA_PSS_HASH_SIGN_TEST("RSA-PSS/SHA1", 1024, CKM_RSA_PKCS_PSS,
+			       CKM_SHA_1, CKG_MGF1_SHA1, 20,
+			       digest_test_pattern_sha1),
+	RSA_PSS_CSTR_SIGN_TEST("RSA-PSS/SHA1/mech", 1024,
+			       CKM_SHA1_RSA_PKCS_PSS, CKM_SHA_1, CKG_MGF1_SHA1,
+			       20, digest_test_pattern),
+	RSA_PSS_HASH_SIGN_TEST("RSA-PSS/SHA224", 1024, CKM_RSA_PKCS_PSS,
+			       CKM_SHA224, CKG_MGF1_SHA224, 28,
+			       digest_test_pattern_sha224),
+	RSA_PSS_CSTR_SIGN_TEST("RSA-PSS/SHA224/mech", 1024,
+			       CKM_SHA224_RSA_PKCS_PSS, CKM_SHA224,
+			       CKG_MGF1_SHA224, 28, digest_test_pattern),
+	RSA_PSS_HASH_SIGN_TEST("RSA-PSS/SHA256", 1024, CKM_RSA_PKCS_PSS,
+			       CKM_SHA256, CKG_MGF1_SHA256, 32,
+			       digest_test_pattern_sha256),
+	RSA_PSS_CSTR_SIGN_TEST("RSA-PSS/SHA256/mech", 1024,
+			       CKM_SHA256_RSA_PKCS_PSS, CKM_SHA256,
+			       CKG_MGF1_SHA256, 32, digest_test_pattern),
+	RSA_PSS_HASH_SIGN_TEST("RSA-PSS/SHA384", 1024, CKM_RSA_PKCS_PSS,
+			       CKM_SHA384, CKG_MGF1_SHA384, 48,
+			       digest_test_pattern_sha384),
+	RSA_PSS_CSTR_SIGN_TEST("RSA-PSS/SHA384/mech", 1024,
+			       CKM_SHA384_RSA_PKCS_PSS, CKM_SHA384,
+			       CKG_MGF1_SHA384, 48, digest_test_pattern),
+	RSA_PSS_HASH_SIGN_TEST("RSA-PSS/SHA512", 2048, CKM_RSA_PKCS_PSS,
+			       CKM_SHA512, CKG_MGF1_SHA512, 64,
+			       digest_test_pattern_sha512),
+	RSA_PSS_CSTR_SIGN_TEST("RSA-PSS/SHA512/mech", 2048,
+			       CKM_SHA512_RSA_PKCS_PSS, CKM_SHA512,
+			       CKG_MGF1_SHA512, 64, digest_test_pattern),
+};
+
+static int test_rsa_pss_operations(ADBG_Case_t *c,
+				    CK_SESSION_HANDLE session,
+				    const char *rsa_name, uint32_t rsa_bits)
+{
+	CK_RV rv = CKR_GENERAL_ERROR;
+
+	CK_OBJECT_HANDLE public_key = CK_INVALID_HANDLE;
+	CK_OBJECT_HANDLE private_key = CK_INVALID_HANDLE;
+
+	CK_MECHANISM mechanism = {
+		CKM_RSA_PKCS_KEY_PAIR_GEN, NULL, 0
+	};
+	CK_MECHANISM sign_mechanism = {
+		CKM_RSA_PKCS_PSS, NULL, 0
+	};
+	CK_RSA_PKCS_PSS_PARAMS pss_params = {
+		CKM_SHA256, CKG_MGF1_SHA256, 32,
+	};
+	CK_ULONG modulus_bits = 0;
+	CK_BYTE public_exponent[] = { 1, 0, 1 };
+	CK_BYTE id[] = { 123 };
+
+	CK_ATTRIBUTE public_key_template[] = {
+		{ CKA_ENCRYPT, &(CK_BBOOL){ CK_FALSE }, sizeof(CK_BBOOL) },
+		{ CKA_VERIFY, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_WRAP, &(CK_BBOOL){ CK_FALSE }, sizeof(CK_BBOOL) },
+		{ CKA_MODULUS_BITS, &modulus_bits, sizeof(CK_ULONG) },
+		{ CKA_PUBLIC_EXPONENT, public_exponent,
+		  sizeof(public_exponent) }
+	};
+
+	CK_ATTRIBUTE private_key_template[] = {
+		{ CKA_TOKEN, &(CK_BBOOL){ CK_FALSE }, sizeof(CK_BBOOL) },
+		{ CKA_PRIVATE, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_SUBJECT, subject_common_name,
+		  sizeof(subject_common_name) },
+		{ CKA_ID, id, sizeof(id) },
+		{ CKA_SENSITIVE, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_DECRYPT, &(CK_BBOOL){ CK_FALSE }, sizeof(CK_BBOOL) },
+		{ CKA_SIGN, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_UNWRAP, &(CK_BBOOL){ CK_FALSE }, sizeof(CK_BBOOL) }
+	};
+
+	CK_OBJECT_CLASS g_class = 0;
+	CK_KEY_TYPE g_key_type = 0;
+	CK_BYTE g_id[32] = { 0 };
+	CK_DATE g_start_date = { 0 };
+	CK_DATE g_end_date = { 0 };
+	CK_BBOOL g_derive = CK_FALSE;
+	CK_BBOOL g_local = CK_FALSE;
+	CK_MECHANISM_TYPE g_keygen_mecha = 0;
+	CK_BYTE g_subject[64] = { 0 };
+	CK_BBOOL g_encrypt = CK_FALSE;
+	CK_BBOOL g_verify = CK_FALSE;
+	CK_BBOOL g_verify_recover = CK_FALSE;
+	CK_BBOOL g_wrap = CK_FALSE;
+	CK_BBOOL g_trusted = CK_FALSE;
+	CK_BYTE g_public_key_info[1024] = { 0 };
+	CK_BBOOL g_sensitive = CK_FALSE;
+	CK_BBOOL g_decrypt = CK_FALSE;
+	CK_BBOOL g_sign = CK_FALSE;
+	CK_BBOOL g_sign_recover = CK_FALSE;
+	CK_BBOOL g_unwrap = CK_FALSE;
+	CK_BBOOL g_extract = CK_FALSE;
+	CK_BBOOL g_asensitive = CK_FALSE;
+	CK_BBOOL g_nextract = CK_FALSE;
+	CK_BBOOL g_wrap_with_trusted = CK_FALSE;
+	CK_BBOOL g_always_authenticate = CK_FALSE;
+
+	/* Note: Tests below expects specific order of elements */
+	CK_ATTRIBUTE get_public_template[] = {
+		{ CKA_CLASS, &g_class, sizeof(CK_OBJECT_CLASS) },
+		{ CKA_KEY_TYPE,	&g_key_type, sizeof(CK_KEY_TYPE) },
+		{ CKA_ID, g_id, sizeof(g_id) },
+		{ CKA_START_DATE, &g_start_date, sizeof(CK_DATE) },
+		{ CKA_END_DATE, &g_end_date, sizeof(CK_DATE) },
+		{ CKA_DERIVE, &g_derive, sizeof(CK_BBOOL) },
+		{ CKA_LOCAL, &g_local, sizeof(CK_BBOOL) },
+		{ CKA_KEY_GEN_MECHANISM, &g_keygen_mecha, sizeof(CK_MECHANISM_TYPE) },
+		{ CKA_SUBJECT, g_subject, sizeof(g_subject) },
+		{ CKA_ENCRYPT, &g_encrypt, sizeof(CK_BBOOL) },
+		{ CKA_VERIFY, &g_verify, sizeof(CK_BBOOL) },
+		{ CKA_VERIFY_RECOVER, &g_verify_recover, sizeof(CK_BBOOL) },
+		{ CKA_WRAP, &g_wrap, sizeof(CK_BBOOL) },
+		{ CKA_TRUSTED, &g_trusted, sizeof(CK_BBOOL) },
+		{ CKA_PUBLIC_KEY_INFO, g_public_key_info, sizeof(g_public_key_info) },
+	};
+
+	/* Note: Tests below expects specific order of elements */
+	CK_ATTRIBUTE get_private_template[] = {
+		{ CKA_CLASS, &g_class, sizeof(CK_OBJECT_CLASS) },
+		{ CKA_KEY_TYPE,	&g_key_type, sizeof(CK_KEY_TYPE) },
+		{ CKA_ID, g_id, sizeof(g_id) },
+		{ CKA_START_DATE, &g_start_date, sizeof(CK_DATE) },
+		{ CKA_END_DATE, &g_end_date, sizeof(CK_DATE) },
+		{ CKA_DERIVE, &g_derive, sizeof(CK_BBOOL) },
+		{ CKA_LOCAL, &g_local, sizeof(CK_BBOOL) },
+		{ CKA_KEY_GEN_MECHANISM, &g_keygen_mecha, sizeof(CK_MECHANISM_TYPE) },
+		{ CKA_SUBJECT, g_subject, sizeof(g_subject) },
+		{ CKA_SENSITIVE, &g_sensitive, sizeof(CK_BBOOL) },
+		{ CKA_DECRYPT, &g_decrypt, sizeof(CK_BBOOL) },
+		{ CKA_SIGN, &g_sign, sizeof(CK_BBOOL) },
+		{ CKA_SIGN_RECOVER, &g_sign_recover, sizeof(CK_BBOOL) },
+		{ CKA_UNWRAP, &g_unwrap, sizeof(CK_BBOOL) },
+		{ CKA_EXTRACTABLE, &g_extract, sizeof(CK_BBOOL) },
+		{ CKA_ALWAYS_SENSITIVE, &g_asensitive, sizeof(CK_BBOOL) },
+		{ CKA_NEVER_EXTRACTABLE, &g_nextract, sizeof(CK_BBOOL) },
+		{ CKA_WRAP_WITH_TRUSTED, &g_wrap_with_trusted, sizeof(CK_BBOOL) },
+		{ CKA_ALWAYS_AUTHENTICATE, &g_always_authenticate, sizeof(CK_BBOOL) },
+		{ CKA_PUBLIC_KEY_INFO, g_public_key_info, sizeof(g_public_key_info) },
+	};
+
+	uint8_t signature[512] = { 0 };
+	CK_ULONG signature_len = 0;
+
+	size_t i = 0;
+
+	Do_ADBG_BeginSubCase(c, "%s: Generate key pair", rsa_name);
+
+	modulus_bits = rsa_bits;
+
+	rv = C_GenerateKeyPair(session, &mechanism, public_key_template,
+			       ARRAY_SIZE(public_key_template),
+			       private_key_template,
+			       ARRAY_SIZE(private_key_template),
+			       &public_key, &private_key);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto err;
+
+	/* reset get public key template */
+	memset(g_id, 0, sizeof(g_id));
+	assert(get_public_template[2].type == CKA_ID);
+	get_public_template[2].ulValueLen = sizeof(g_id);
+
+	memset(g_subject, 0, sizeof(g_subject));
+	assert(get_public_template[8].type == CKA_SUBJECT);
+	get_public_template[8].ulValueLen = sizeof(g_subject);
+
+	memset(g_public_key_info, 0, sizeof(g_public_key_info));
+	assert(get_public_template[14].type == CKA_PUBLIC_KEY_INFO);
+	get_public_template[14].ulValueLen = sizeof(g_public_key_info);
+
+	rv = C_GetAttributeValue(session, public_key, get_public_template,
+				 ARRAY_SIZE(get_public_template));
+	if (!ADBG_EXPECT_CK_OK(c, rv) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_class, ==, CKO_PUBLIC_KEY) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_key_type, ==, CKK_RSA) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_derive, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_local, ==, CK_TRUE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_keygen_mecha, ==,
+					  CKM_RSA_PKCS_KEY_PAIR_GEN) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_encrypt, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_verify, ==, CK_TRUE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_verify_recover, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_wrap, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_trusted, ==, CK_FALSE))
+		goto err_destr_obj;
+
+	/* reset get private key template */
+	memset(g_id, 0, sizeof(g_id));
+	assert(get_private_template[2].type == CKA_ID);
+	get_private_template[2].ulValueLen = sizeof(g_id);
+
+	memset(g_subject, 0, sizeof(g_subject));
+	assert(get_private_template[8].type == CKA_SUBJECT);
+	get_private_template[8].ulValueLen = sizeof(g_subject);
+
+	memset(g_public_key_info, 0, sizeof(g_public_key_info));
+	assert(get_private_template[19].type == CKA_PUBLIC_KEY_INFO);
+	get_private_template[19].ulValueLen = sizeof(g_public_key_info);
+
+	rv = C_GetAttributeValue(session, private_key, get_private_template,
+				 ARRAY_SIZE(get_private_template));
+	if (!ADBG_EXPECT_CK_OK(c, rv) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_class, ==, CKO_PRIVATE_KEY) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_key_type, ==, CKK_RSA) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_derive, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_local, ==, CK_TRUE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_keygen_mecha, ==,
+					  CKM_RSA_PKCS_KEY_PAIR_GEN) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_sensitive, ==, CK_TRUE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_decrypt, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_sign, ==, CK_TRUE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_sign_recover, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_unwrap, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_extract, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_asensitive, ==, CK_TRUE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_nextract, ==, CK_TRUE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_wrap_with_trusted, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_always_authenticate, ==, CK_FALSE))
+		goto err_destr_obj;
+
+	for (i = 0; i < ARRAY_SIZE(rsa_pss_sign_tests); i++) {
+		/*
+		 * Note: this order of end/begin here is just to get ADBG
+		 * SubCases in sync with error handling.
+		 */
+		Do_ADBG_EndSubCase(c, NULL);
+
+		Do_ADBG_BeginSubCase(c, "%s: Sign & verify - oneshot - %s",
+				     rsa_name,
+				     rsa_pss_sign_tests[i].test_name);
+
+		sign_mechanism.mechanism = rsa_pss_sign_tests[i].mecha;
+		sign_mechanism.pParameter = &pss_params;
+		sign_mechanism.ulParameterLen = sizeof(pss_params);
+		pss_params.hashAlg = rsa_pss_sign_tests[i].hash_algo;
+		pss_params.mgf = rsa_pss_sign_tests[i].mgf_algo;
+		pss_params.sLen = rsa_pss_sign_tests[i].salt_len;
+
+		memset(signature, 0, sizeof(signature));
+		signature_len = sizeof(signature);
+
+		rv = C_SignInit(session, &sign_mechanism, private_key);
+		if (rsa_bits >= rsa_pss_sign_tests[i].min_rsa_bits) {
+			if (!ADBG_EXPECT_CK_OK(c, rv))
+				goto err_destr_obj;
+		} else {
+			if (!ADBG_EXPECT_CK_RESULT(c, CKR_KEY_SIZE_RANGE, rv))
+				goto err_destr_obj;
+			continue;
+		}
+
+		rv = C_Sign(session, (void *)rsa_pss_sign_tests[i].data,
+			    rsa_pss_sign_tests[i].data_size,
+			    (void *)signature, &signature_len);
+		if (!ADBG_EXPECT_CK_OK(c, rv))
+			goto err_destr_obj;
+
+		rv = C_VerifyInit(session, &sign_mechanism, public_key);
+		if (!ADBG_EXPECT_CK_OK(c, rv))
+			goto err_destr_obj;
+
+		rv = C_Verify(session, (void *)rsa_pss_sign_tests[i].data,
+			      rsa_pss_sign_tests[i].data_size,
+			      (void *)signature, signature_len);
+		if (!ADBG_EXPECT_CK_OK(c, rv))
+			goto err_destr_obj;
+	}
+
+	rv = C_DestroyObject(session, private_key);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto err_destr_pub_obj;
+
+	rv = C_DestroyObject(session, public_key);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto err;
+
+	Do_ADBG_EndSubCase(c, NULL);
+
+	return 1;
+
+err_destr_obj:
+	ADBG_EXPECT_CK_OK(c, C_DestroyObject(session, private_key));
+err_destr_pub_obj:
+	ADBG_EXPECT_CK_OK(c, C_DestroyObject(session, public_key));
+err:
+	Do_ADBG_EndSubCase(c, NULL);
+
+	return 0;
+}
+
+static void xtest_pkcs11_test_1022(ADBG_Case_t *c)
+{
+	CK_RV rv = CKR_GENERAL_ERROR;
+	CK_SLOT_ID slot = 0;
+	CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+	CK_FLAGS session_flags = CKF_SERIAL_SESSION | CKF_RW_SESSION;
+	int ret = 0;
+
+	rv = init_lib_and_find_token_slot(&slot);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		return;
+
+	rv = init_test_token(slot);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto close_lib;
+
+	rv = init_user_test_token(slot);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto close_lib;
+
+	rv = C_OpenSession(slot, session_flags, NULL, 0, &session);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto close_lib;
+
+	/* Login to Test Token */
+	rv = C_Login(session, CKU_USER,	test_token_user_pin,
+		     sizeof(test_token_user_pin));
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto out;
+
+	ret = test_rsa_pss_operations(c, session, "RSA-1024", 1024);
+	if (!ret)
+		goto out;
+	ret = test_rsa_pss_operations(c, session, "RSA-2048", 2048);
+	if (!ret)
+		goto out;
+	if (level > 0) {
+		ret = test_rsa_pss_operations(c, session, "RSA-3072", 3072);
+		if (!ret)
+			goto out;
+		ret = test_rsa_pss_operations(c, session, "RSA-4096", 4096);
+		if (!ret)
+			goto out;
+	}
+out:
+	ADBG_EXPECT_CK_OK(c, C_CloseSession(session));
+close_lib:
+	ADBG_EXPECT_CK_OK(c, close_lib());
+}
+ADBG_CASE_DEFINE(pkcs11, 1022, xtest_pkcs11_test_1022,
+		 "PKCS11: RSA PSS key generation and signing");
+
+static const char rsa_oaep_message[] = "Hello World";
+static char rsa_oaep_label[] = "TestLabel";
+
+#define RSA_OAEP_CRYPT_TEST(_test_name, _min_rsa_bits, _hash_algo, _mgf_algo, \
+			    _source_data, _source_data_len) \
+	{ \
+		.test_name = _test_name, \
+		.min_rsa_bits = _min_rsa_bits, \
+		.hash_algo = _hash_algo, \
+		.mgf_algo = _mgf_algo, \
+		.source_data = _source_data, \
+		.source_data_len = _source_data_len, \
+	}
+
+/* List of RSA OAEP crypto params to test out */
+static struct {
+	const char *test_name;
+	uint32_t min_rsa_bits;
+	CK_MECHANISM_TYPE hash_algo;
+	CK_RSA_PKCS_MGF_TYPE mgf_algo;
+	void *source_data;
+	size_t source_data_len;
+} rsa_oaep_crypt_tests[] = {
+	RSA_OAEP_CRYPT_TEST("RSA-OAEP/SHA1", 1024, CKM_SHA_1, CKG_MGF1_SHA1,
+			    NULL, 0),
+	RSA_OAEP_CRYPT_TEST("RSA-OAEP/SHA1/label", 1024, CKM_SHA_1,
+			    CKG_MGF1_SHA1, rsa_oaep_label,
+			    sizeof(rsa_oaep_label)),
+#ifndef CFG_CRYPTO_SE05X
+	RSA_OAEP_CRYPT_TEST("RSA-OAEP/SHA224", 1024, CKM_SHA224,
+			    CKG_MGF1_SHA224, NULL, 0),
+	RSA_OAEP_CRYPT_TEST("RSA-OAEP/SHA224/label", 1024, CKM_SHA224,
+			    CKG_MGF1_SHA224, rsa_oaep_label,
+			    sizeof(rsa_oaep_label)),
+	RSA_OAEP_CRYPT_TEST("RSA-OAEP/SHA256", 1024, CKM_SHA256,
+			    CKG_MGF1_SHA256, NULL, 0),
+	RSA_OAEP_CRYPT_TEST("RSA-OAEP/SHA256/label", 1024, CKM_SHA256,
+			    CKG_MGF1_SHA256, rsa_oaep_label,
+			    sizeof(rsa_oaep_label)),
+	RSA_OAEP_CRYPT_TEST("RSA-OAEP/SHA384", 1024, CKM_SHA384,
+			    CKG_MGF1_SHA384, NULL, 0),
+	RSA_OAEP_CRYPT_TEST("RSA-OAEP/SHA384/label", 1024, CKM_SHA384,
+			    CKG_MGF1_SHA384, rsa_oaep_label,
+			    sizeof(rsa_oaep_label)),
+	RSA_OAEP_CRYPT_TEST("RSA-OAEP/SHA512", 2048, CKM_SHA512,
+			    CKG_MGF1_SHA512, NULL, 0),
+	RSA_OAEP_CRYPT_TEST("RSA-OAEP/SHA512/label", 2048, CKM_SHA512,
+			    CKG_MGF1_SHA512, rsa_oaep_label,
+			    sizeof(rsa_oaep_label)),
+#endif
+};
+
+static int test_rsa_oaep_operations(ADBG_Case_t *c,
+				    CK_SESSION_HANDLE session,
+				    const char *rsa_name, uint32_t rsa_bits)
+{
+	CK_RV rv = CKR_GENERAL_ERROR;
+	CK_OBJECT_HANDLE public_key = CK_INVALID_HANDLE;
+	CK_OBJECT_HANDLE private_key = CK_INVALID_HANDLE;
+
+	CK_MECHANISM mechanism = {
+		CKM_RSA_PKCS_KEY_PAIR_GEN, NULL, 0
+	};
+	CK_MECHANISM crypt_mechanism = {
+		CKM_RSA_PKCS_OAEP, NULL, 0
+	};
+	CK_RSA_PKCS_OAEP_PARAMS oaep_params = {
+		CKM_SHA256, CKG_MGF1_SHA256, CKZ_DATA_SPECIFIED, NULL, 0
+	};
+	CK_BYTE public_exponent[] = { 1, 0, 1 };
+	CK_BYTE id[] = { 123 };
+	CK_ULONG modulus_bits = 0;
+	CK_ATTRIBUTE public_key_template[] = {
+		{ CKA_ENCRYPT, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_VERIFY, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_WRAP, &(CK_BBOOL){ CK_FALSE }, sizeof(CK_BBOOL) },
+		{ CKA_MODULUS_BITS, &modulus_bits, sizeof(CK_ULONG) },
+		{ CKA_PUBLIC_EXPONENT, public_exponent,
+		  sizeof(public_exponent) }
+	};
+	CK_ATTRIBUTE private_key_template[] = {
+		{ CKA_TOKEN, &(CK_BBOOL){ CK_FALSE }, sizeof(CK_BBOOL) },
+		{ CKA_PRIVATE, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_SUBJECT, subject_common_name,
+		  sizeof(subject_common_name) },
+		{ CKA_ID, id, sizeof(id) },
+		{ CKA_SENSITIVE, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_DECRYPT, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_SIGN, &(CK_BBOOL){ CK_TRUE }, sizeof(CK_BBOOL) },
+		{ CKA_UNWRAP, &(CK_BBOOL){ CK_FALSE }, sizeof(CK_BBOOL) }
+	};
+
+	CK_OBJECT_CLASS g_class = 0;
+	CK_KEY_TYPE g_key_type = 0;
+	CK_BYTE g_id[32] = { 0 };
+	CK_DATE g_start_date = { 0 };
+	CK_DATE g_end_date = { 0 };
+	CK_BBOOL g_derive = CK_FALSE;
+	CK_BBOOL g_local = CK_FALSE;
+	CK_MECHANISM_TYPE g_keygen_mecha = 0;
+	CK_BYTE g_subject[64] = { 0 };
+	CK_BBOOL g_encrypt = CK_FALSE;
+	CK_BBOOL g_verify = CK_FALSE;
+	CK_BBOOL g_verify_recover = CK_FALSE;
+	CK_BBOOL g_wrap = CK_FALSE;
+	CK_BBOOL g_trusted = CK_FALSE;
+	CK_BYTE g_public_key_info[1024] = { 0 };
+	CK_BBOOL g_sensitive = CK_FALSE;
+	CK_BBOOL g_decrypt = CK_FALSE;
+	CK_BBOOL g_sign = CK_FALSE;
+	CK_BBOOL g_sign_recover = CK_FALSE;
+	CK_BBOOL g_unwrap = CK_FALSE;
+	CK_BBOOL g_extract = CK_FALSE;
+	CK_BBOOL g_asensitive = CK_FALSE;
+	CK_BBOOL g_nextract = CK_FALSE;
+	CK_BBOOL g_wrap_with_trusted = CK_FALSE;
+	CK_BBOOL g_always_authenticate = CK_FALSE;
+
+	/* Note: Tests below expects specific order of elements */
+	CK_ATTRIBUTE get_public_template[] = {
+		{ CKA_CLASS, &g_class, sizeof(CK_OBJECT_CLASS) },
+		{ CKA_KEY_TYPE,	&g_key_type, sizeof(CK_KEY_TYPE) },
+		{ CKA_ID, g_id, sizeof(g_id) },
+		{ CKA_START_DATE, &g_start_date, sizeof(CK_DATE) },
+		{ CKA_END_DATE, &g_end_date, sizeof(CK_DATE) },
+		{ CKA_DERIVE, &g_derive, sizeof(CK_BBOOL) },
+		{ CKA_LOCAL, &g_local, sizeof(CK_BBOOL) },
+		{ CKA_KEY_GEN_MECHANISM, &g_keygen_mecha, sizeof(CK_MECHANISM_TYPE) },
+		{ CKA_SUBJECT, g_subject, sizeof(g_subject) },
+		{ CKA_ENCRYPT, &g_encrypt, sizeof(CK_BBOOL) },
+		{ CKA_VERIFY, &g_verify, sizeof(CK_BBOOL) },
+		{ CKA_VERIFY_RECOVER, &g_verify_recover, sizeof(CK_BBOOL) },
+		{ CKA_WRAP, &g_wrap, sizeof(CK_BBOOL) },
+		{ CKA_TRUSTED, &g_trusted, sizeof(CK_BBOOL) },
+		{ CKA_PUBLIC_KEY_INFO, g_public_key_info, sizeof(g_public_key_info) },
+	};
+
+	/* Note: Tests below expects specific order of elements */
+	CK_ATTRIBUTE get_private_template[] = {
+		{ CKA_CLASS, &g_class, sizeof(CK_OBJECT_CLASS) },
+		{ CKA_KEY_TYPE,	&g_key_type, sizeof(CK_KEY_TYPE) },
+		{ CKA_ID, g_id, sizeof(g_id) },
+		{ CKA_START_DATE, &g_start_date, sizeof(CK_DATE) },
+		{ CKA_END_DATE, &g_end_date, sizeof(CK_DATE) },
+		{ CKA_DERIVE, &g_derive, sizeof(CK_BBOOL) },
+		{ CKA_LOCAL, &g_local, sizeof(CK_BBOOL) },
+		{ CKA_KEY_GEN_MECHANISM, &g_keygen_mecha, sizeof(CK_MECHANISM_TYPE) },
+		{ CKA_SUBJECT, g_subject, sizeof(g_subject) },
+		{ CKA_SENSITIVE, &g_sensitive, sizeof(CK_BBOOL) },
+		{ CKA_DECRYPT, &g_decrypt, sizeof(CK_BBOOL) },
+		{ CKA_SIGN, &g_sign, sizeof(CK_BBOOL) },
+		{ CKA_SIGN_RECOVER, &g_sign_recover, sizeof(CK_BBOOL) },
+		{ CKA_UNWRAP, &g_unwrap, sizeof(CK_BBOOL) },
+		{ CKA_EXTRACTABLE, &g_extract, sizeof(CK_BBOOL) },
+		{ CKA_ALWAYS_SENSITIVE, &g_asensitive, sizeof(CK_BBOOL) },
+		{ CKA_NEVER_EXTRACTABLE, &g_nextract, sizeof(CK_BBOOL) },
+		{ CKA_WRAP_WITH_TRUSTED, &g_wrap_with_trusted, sizeof(CK_BBOOL) },
+		{ CKA_ALWAYS_AUTHENTICATE, &g_always_authenticate, sizeof(CK_BBOOL) },
+		{ CKA_PUBLIC_KEY_INFO, g_public_key_info, sizeof(g_public_key_info) },
+	};
+	uint8_t ciphertext[512] = { 0 };
+	CK_ULONG ciphertext_len = 0;
+	uint8_t plaintext[512] = { 0 };
+	CK_ULONG plaintext_len = 0;
+	size_t i = 0;
+
+	Do_ADBG_BeginSubCase(c, "%s: Generate key pair", rsa_name);
+
+	modulus_bits = rsa_bits;
+
+	rv = C_GenerateKeyPair(session, &mechanism, public_key_template,
+			       ARRAY_SIZE(public_key_template),
+			       private_key_template,
+			       ARRAY_SIZE(private_key_template),
+			       &public_key, &private_key);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto err;
+
+	/* reset get public key template */
+	memset(g_id, 0, sizeof(g_id));
+	assert(get_public_template[2].type == CKA_ID);
+	get_public_template[2].ulValueLen = sizeof(g_id);
+
+	memset(g_subject, 0, sizeof(g_subject));
+	assert(get_public_template[8].type == CKA_SUBJECT);
+	get_public_template[8].ulValueLen = sizeof(g_subject);
+
+	memset(g_public_key_info, 0, sizeof(g_public_key_info));
+	assert(get_public_template[14].type == CKA_PUBLIC_KEY_INFO);
+	get_public_template[14].ulValueLen = sizeof(g_public_key_info);
+
+	rv = C_GetAttributeValue(session, public_key,
+				 get_public_template,
+				 ARRAY_SIZE(get_public_template));
+	if (!ADBG_EXPECT_CK_OK(c, rv) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_class, ==, CKO_PUBLIC_KEY) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_key_type, ==, CKK_RSA) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_derive, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_local, ==, CK_TRUE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_keygen_mecha, ==,
+					  CKM_RSA_PKCS_KEY_PAIR_GEN) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_encrypt, ==, CK_TRUE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_verify, ==, CK_TRUE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_verify_recover, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_wrap, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_trusted, ==, CK_FALSE))
+		goto err_destr_obj;
+
+	/* reset get private key template */
+	memset(g_id, 0, sizeof(g_id));
+	assert(get_private_template[2].type == CKA_ID);
+	get_private_template[2].ulValueLen = sizeof(g_id);
+
+	memset(g_subject, 0, sizeof(g_subject));
+	assert(get_private_template[8].type == CKA_SUBJECT);
+	get_private_template[8].ulValueLen = sizeof(g_subject);
+
+	memset(g_public_key_info, 0, sizeof(g_public_key_info));
+	assert(get_private_template[19].type == CKA_PUBLIC_KEY_INFO);
+	get_private_template[19].ulValueLen = sizeof(g_public_key_info);
+
+	rv = C_GetAttributeValue(session, private_key,
+				 get_private_template,
+				 ARRAY_SIZE(get_private_template));
+	if (!ADBG_EXPECT_CK_OK(c, rv) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_class, ==, CKO_PRIVATE_KEY) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_key_type, ==, CKK_RSA) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_derive, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_local, ==, CK_TRUE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_keygen_mecha, ==,
+					  CKM_RSA_PKCS_KEY_PAIR_GEN) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_sensitive, ==, CK_TRUE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_decrypt, ==, CK_TRUE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_sign, ==, CK_TRUE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_sign_recover, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_unwrap, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_extract, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_asensitive, ==, CK_TRUE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_nextract, ==, CK_TRUE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_wrap_with_trusted, ==, CK_FALSE) ||
+	    !ADBG_EXPECT_COMPARE_UNSIGNED(c, g_always_authenticate, ==, CK_FALSE))
+		goto err_destr_obj;
+
+	for (i = 0; i < ARRAY_SIZE(rsa_oaep_crypt_tests); i++) {
+		/*
+		 * Note: this order of end/begin here is just to get ADBG
+		 * SubCases in sync with error handling.
+		 */
+		Do_ADBG_EndSubCase(c, NULL);
+
+		Do_ADBG_BeginSubCase(c, "%s: Encrypt & decrypt - oneshot - %s",
+				     rsa_name,
+				     rsa_oaep_crypt_tests[i].test_name);
+
+		crypt_mechanism.mechanism = CKM_RSA_PKCS_OAEP;
+		crypt_mechanism.pParameter = &oaep_params;
+		crypt_mechanism.ulParameterLen = sizeof(oaep_params);
+		oaep_params.hashAlg = rsa_oaep_crypt_tests[i].hash_algo;
+		oaep_params.mgf = rsa_oaep_crypt_tests[i].mgf_algo;
+		oaep_params.pSourceData = rsa_oaep_crypt_tests[i].source_data;
+		oaep_params.ulSourceDataLen = rsa_oaep_crypt_tests[i].source_data_len;
+
+		memset(ciphertext, 0, sizeof(ciphertext));
+		memset(plaintext, 0, sizeof(plaintext));
+
+		ciphertext_len = 0;
+
+		memcpy(plaintext, rsa_oaep_message, sizeof(rsa_oaep_message));
+		plaintext_len = sizeof(rsa_oaep_message);
+
+		rv = C_EncryptInit(session, &crypt_mechanism, public_key);
+		if (!ADBG_EXPECT_CK_OK(c, rv))
+			goto err_destr_obj;
+
+		rv = C_Encrypt(session, plaintext, plaintext_len, NULL,
+			       &ciphertext_len);
+		if (!ADBG_EXPECT_CK_OK(c, rv))
+			goto err_destr_obj;
+
+		rv = C_Encrypt(session, plaintext, plaintext_len, ciphertext,
+			       &ciphertext_len);
+		if (rsa_bits >= rsa_oaep_crypt_tests[i].min_rsa_bits) {
+			if (!ADBG_EXPECT_CK_OK(c, rv))
+				goto err_destr_obj;
+		} else {
+			if (!ADBG_EXPECT_CK_RESULT(c, CKR_DATA_LEN_RANGE, rv))
+				goto err_destr_obj;
+			continue;
+		}
+
+		memset(plaintext, 0, sizeof(plaintext));
+		plaintext_len = 0;
+
+		rv = C_DecryptInit(session, &crypt_mechanism, private_key);
+		if (!ADBG_EXPECT_CK_OK(c, rv))
+			goto err_destr_obj;
+
+		rv = C_Decrypt(session, ciphertext, ciphertext_len, NULL,
+			       &plaintext_len);
+		if (!ADBG_EXPECT_CK_OK(c, rv))
+			goto err_destr_obj;
+
+		rv = C_Decrypt(session, ciphertext, ciphertext_len, plaintext,
+			       &plaintext_len);
+		if (!ADBG_EXPECT_CK_OK(c, rv) ||
+		    !ADBG_EXPECT_BUFFER(c, rsa_oaep_message,
+					sizeof(rsa_oaep_message), plaintext,
+					plaintext_len))
+			goto err_destr_obj;
+	}
+
+	rv = C_DestroyObject(session, private_key);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto err_destr_pub_obj;
+
+	rv = C_DestroyObject(session, public_key);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto err;
+
+	Do_ADBG_EndSubCase(c, NULL);
+
+	return 1;
+
+err_destr_obj:
+	ADBG_EXPECT_CK_OK(c, C_DestroyObject(session, private_key));
+err_destr_pub_obj:
+	ADBG_EXPECT_CK_OK(c, C_DestroyObject(session, public_key));
+err:
+	Do_ADBG_EndSubCase(c, NULL);
+
+	return 0;
+}
+
+static void xtest_pkcs11_test_1023(ADBG_Case_t *c)
+{
+	CK_RV rv = CKR_GENERAL_ERROR;
+	CK_SLOT_ID slot = 0;
+	CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+	CK_FLAGS session_flags = CKF_SERIAL_SESSION | CKF_RW_SESSION;
+	int ret = 0;
+
+	rv = init_lib_and_find_token_slot(&slot);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		return;
+
+	rv = init_test_token(slot);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto close_lib;
+
+	rv = init_user_test_token(slot);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto close_lib;
+
+	rv = C_OpenSession(slot, session_flags, NULL, 0, &session);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto close_lib;
+
+	/* Login to Test Token */
+	rv = C_Login(session, CKU_USER,	test_token_user_pin,
+		     sizeof(test_token_user_pin));
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto out;
+
+	ret = test_rsa_oaep_operations(c, session, "RSA-1024", 1024);
+	if (!ret)
+		goto out;
+	ret = test_rsa_oaep_operations(c, session, "RSA-2048", 2048);
+	if (!ret)
+		goto out;
+	if (level > 0) {
+		ret = test_rsa_oaep_operations(c, session, "RSA-3072", 3072);
+		if (!ret)
+			goto out;
+		ret = test_rsa_oaep_operations(c, session, "RSA-4096", 4096);
+		if (!ret)
+			goto out;
+	}
+out:
+	ADBG_EXPECT_CK_OK(c, C_CloseSession(session));
+close_lib:
+	ADBG_EXPECT_CK_OK(c, close_lib());
+}
+ADBG_CASE_DEFINE(pkcs11, 1023, xtest_pkcs11_test_1023,
+		 "PKCS11: RSA OAEP key generation and crypto operations");
+
+#ifdef OPENSSL_FOUND
+static const char x509_example_root_ca[] =
+	"-----BEGIN CERTIFICATE-----\n"
+	"MIICDTCCAZOgAwIBAgIBATAKBggqhkjOPQQDAzA+MQswCQYDVQQGEwJGSTEVMBMG\n"
+	"A1UECgwMTWFudWZhY3R1cmVyMRgwFgYDVQQDDA9FeGFtcGxlIFJvb3QgQ0EwIBcN\n"
+	"MjEwODE0MDc1NTU1WhgPOTk5OTEyMzEyMzU5NTlaMD4xCzAJBgNVBAYTAkZJMRUw\n"
+	"EwYDVQQKDAxNYW51ZmFjdHVyZXIxGDAWBgNVBAMMD0V4YW1wbGUgUm9vdCBDQTB2\n"
+	"MBAGByqGSM49AgEGBSuBBAAiA2IABP6jFf4PuIo0t78AeONf2ENbip4GdG9rfstp\n"
+	"bWMvH/0BIn2ioMbapYSK1WcVlOKUaZRrbRzoYWD7ZpwSYFwtd1XmMQkLJ1baIdrt\n"
+	"jibL9yBCYRJJLsmTHn5UiLCoA2EiFaNjMGEwHQYDVR0OBBYEFApC6125F2th+ujZ\n"
+	"PVxTtsI8llA1MB8GA1UdIwQYMBaAFApC6125F2th+ujZPVxTtsI8llA1MA8GA1Ud\n"
+	"EwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgEGMAoGCCqGSM49BAMDA2gAMGUCMACW\n"
+	"r0/EpTD1uJ9JLsyC8aGP2rSr44J50K6fT0h3LZWMhL5fGkkNTCdmuWbWZznTswIx\n"
+	"APjyNm4f///vWUN3XFd+BRhS2YHR43c0K4oNVyLqigoMoSqu0zXt9Xm+Lsu5iqgJ\n"
+	"NQ==\n"
+	"-----END CERTIFICATE-----\n";
+#endif
+
+static void xtest_pkcs11_test_1024(ADBG_Case_t *c)
+{
+#ifndef OPENSSL_FOUND
+	(void)c;
+	Do_ADBG_Log("OpenSSL not available, skipping X.509 Certificate tests");
+#else
+	CK_RV rv = CKR_GENERAL_ERROR;
+	CK_SLOT_ID slot = 0;
+	CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
+	CK_FLAGS session_flags = CKF_SERIAL_SESSION | CKF_RW_SESSION;
+	BIO *x509_bio = NULL;
+	X509 *x509_cert = NULL;
+	uint8_t *x509_cert_der = NULL;
+	int x509_cert_der_size = 0;
+	X509_NAME *x509_subject_name = NULL;
+	uint8_t *x509_subject_name_der = NULL;
+	int x509_subject_name_der_size = 0;
+	X509_NAME *x509_issuer_name = NULL;
+	uint8_t *x509_issuer_name_der = NULL;
+	int x509_issuer_name_der_size = 0;
+	ASN1_INTEGER *x509_serial_number = NULL;
+	uint8_t *x509_serial_number_der = NULL;
+	int x509_serial_number_der_size = 0;
+	uint8_t *p = NULL;
+	CK_BYTE id[] = { 123 };
+	const char *label = "example-root-ca";
+	/* Note: Tests below expects specific order of elements */
+	CK_ATTRIBUTE certificate_object[] = {
+		{ CKA_TOKEN,	&(CK_BBOOL){ CK_FALSE }, sizeof(CK_BBOOL) },
+		{ CKA_CLASS,	&(CK_OBJECT_CLASS){ CKO_CERTIFICATE },
+		  sizeof(CK_OBJECT_CLASS) },
+		{ CKA_CERTIFICATE_TYPE, &(CK_CERTIFICATE_TYPE){ CKC_X_509 },
+		  sizeof(CK_CERTIFICATE_TYPE) },
+		{ CKA_CERTIFICATE_CATEGORY,
+		  &(CK_ULONG){ CK_CERTIFICATE_CATEGORY_UNSPECIFIED },
+		  sizeof(CK_ULONG) },
+		{ CKA_NAME_HASH_ALGORITHM, &(CK_MECHANISM_TYPE){ CKM_SHA_1 },
+		  sizeof(CK_MECHANISM_TYPE) },
+		{ CKA_ID, id, sizeof(id) },
+		{ CKA_LABEL, (CK_UTF8CHAR_PTR)label, strlen(label) },
+		{ CKA_VALUE,	NULL, 0 },
+		{ CKA_ISSUER,	NULL, 0 },
+		{ CKA_SUBJECT,	NULL, 0 },
+		{ CKA_SERIAL_NUMBER,	NULL, 0 },
+	};
+	/* Note: Tests below expects specific order of elements */
+	CK_ATTRIBUTE certificate_object2[] = {
+		{ CKA_TOKEN,	&(CK_BBOOL){ CK_FALSE }, sizeof(CK_BBOOL) },
+		{ CKA_CLASS,	&(CK_OBJECT_CLASS){ CKO_CERTIFICATE },
+		  sizeof(CK_OBJECT_CLASS) },
+		{ CKA_CERTIFICATE_TYPE, &(CK_CERTIFICATE_TYPE){ CKC_X_509 },
+		  sizeof(CK_CERTIFICATE_TYPE) },
+		{ CKA_ID, id, sizeof(id) },
+		{ CKA_LABEL, (CK_UTF8CHAR_PTR)label, strlen(label) },
+		{ CKA_VALUE,	NULL, 0 },
+		{ CKA_ISSUER,	NULL, 0 },
+		{ CKA_SUBJECT,	NULL, 0 },
+		{ CKA_SERIAL_NUMBER,	NULL, 0 },
+	};
+	/* Note: Tests below expects specific order of elements */
+	/* CKA_CERTIFICATE_CATEGORY is specified below with invalid ID */
+	CK_ATTRIBUTE invalid_category_object[] = {
+		{ CKA_TOKEN,	&(CK_BBOOL){ CK_FALSE }, sizeof(CK_BBOOL) },
+		{ CKA_CLASS,	&(CK_OBJECT_CLASS){ CKO_CERTIFICATE },
+		  sizeof(CK_OBJECT_CLASS) },
+		{ CKA_CERTIFICATE_TYPE, &(CK_CERTIFICATE_TYPE){ CKC_X_509 },
+		  sizeof(CK_CERTIFICATE_TYPE) },
+		{ CKA_CERTIFICATE_CATEGORY, &(CK_ULONG){ -1 },
+		  sizeof(CK_ULONG) },
+		{ CKA_ID, id, sizeof(id) },
+		{ CKA_LABEL, (CK_UTF8CHAR_PTR)label, strlen(label) },
+		{ CKA_VALUE,	NULL, 0 },
+		{ CKA_ISSUER,	NULL, 0 },
+		{ CKA_SUBJECT,	NULL, 0 },
+		{ CKA_SERIAL_NUMBER,	NULL, 0 },
+	};
+	/* Note: Tests below expects specific order of elements */
+	/* CKA_CERTIFICATE_CATEGORY is specified below with invalid size */
+	CK_ATTRIBUTE invalid_category_object2[] = {
+		{ CKA_TOKEN,	&(CK_BBOOL){ CK_FALSE }, sizeof(CK_BBOOL) },
+		{ CKA_CLASS,	&(CK_OBJECT_CLASS){ CKO_CERTIFICATE },
+		  sizeof(CK_OBJECT_CLASS) },
+		{ CKA_CERTIFICATE_TYPE, &(CK_CERTIFICATE_TYPE){ CKC_X_509 },
+		  sizeof(CK_CERTIFICATE_TYPE) },
+		{ CKA_CERTIFICATE_CATEGORY,
+		  &(CK_ULONG){ CK_CERTIFICATE_CATEGORY_UNSPECIFIED }, 0 },
+		{ CKA_ID, id, sizeof(id) },
+		{ CKA_LABEL, (CK_UTF8CHAR_PTR)label, strlen(label) },
+		{ CKA_VALUE,	NULL, 0 },
+		{ CKA_ISSUER,	NULL, 0 },
+		{ CKA_SUBJECT,	NULL, 0 },
+		{ CKA_SERIAL_NUMBER,	NULL, 0 },
+	};
+	/* Note: Tests below expects specific order of elements */
+	/* CKA_NAME_HASH_ALGORITHM is specified below with invalid size */
+	CK_ATTRIBUTE invalid_name_hash_alg_size[] = {
+		{ CKA_TOKEN,	&(CK_BBOOL){ CK_FALSE }, sizeof(CK_BBOOL) },
+		{ CKA_CLASS,	&(CK_OBJECT_CLASS){ CKO_CERTIFICATE },
+		  sizeof(CK_OBJECT_CLASS) },
+		{ CKA_CERTIFICATE_TYPE, &(CK_CERTIFICATE_TYPE){ CKC_X_509 },
+		  sizeof(CK_CERTIFICATE_TYPE) },
+		{ CKA_NAME_HASH_ALGORITHM, &(CK_MECHANISM_TYPE){ CKM_SHA_1 },
+		  sizeof(CK_MECHANISM_TYPE) - 1 },
+		{ CKA_ID, id, sizeof(id) },
+		{ CKA_LABEL, (CK_UTF8CHAR_PTR)label, strlen(label) },
+		{ CKA_VALUE,	NULL, 0 },
+		{ CKA_ISSUER,	NULL, 0 },
+		{ CKA_SUBJECT,	NULL, 0 },
+		{ CKA_SERIAL_NUMBER,	NULL, 0 },
+	};
+	CK_OBJECT_HANDLE obj_hdl = CK_INVALID_HANDLE;
+
+	rv = init_lib_and_find_token_slot(&slot);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		return;
+
+	rv = init_test_token(slot);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto close_lib;
+
+	rv = init_user_test_token(slot);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto close_lib;
+
+	rv = C_OpenSession(slot, session_flags, NULL, 0, &session);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto close_lib;
+
+	/* Login to Test Token */
+	rv = C_Login(session, CKU_USER,	test_token_user_pin,
+		     sizeof(test_token_user_pin));
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto close_session;
+
+	Do_ADBG_BeginSubCase(c, "Import X.509 Certificate");
+
+	/* Parse PEM to OpenSSL's internal X509 format */
+	x509_bio = BIO_new_mem_buf(x509_example_root_ca, -1);
+	if (!ADBG_EXPECT_NOT_NULL(c, x509_bio))
+		goto out;
+
+	x509_cert = PEM_read_bio_X509(x509_bio, NULL, 0, NULL);
+	if (!ADBG_EXPECT_NOT_NULL(c, x509_cert))
+		goto out;
+
+	BIO_free(x509_bio);
+	x509_bio = NULL;
+
+	/* Make DER version for storing it in token */
+	x509_cert_der_size = i2d_X509(x509_cert, NULL);
+	if (!ADBG_EXPECT_COMPARE_SIGNED(c, x509_cert_der_size, >, 0))
+		goto out;
+
+	x509_cert_der = OPENSSL_malloc(x509_cert_der_size);
+	if (!ADBG_EXPECT_NOT_NULL(c, x509_cert_der))
+		goto out;
+
+	p = x509_cert_der;
+	x509_cert_der_size = i2d_X509(x509_cert, &p);
+	if (!ADBG_EXPECT_COMPARE_SIGNED(c, x509_cert_der_size, >, 0))
+		goto out;
+
+	/* Extract needed details from certificate */
+
+	/* Extract subject name */
+	x509_subject_name = X509_get_subject_name(x509_cert);
+	if (!ADBG_EXPECT_NOT_NULL(c, x509_subject_name))
+		goto out;
+
+	x509_subject_name_der_size = i2d_X509_NAME(x509_subject_name, NULL);
+	if (!ADBG_EXPECT_COMPARE_SIGNED(c, x509_subject_name_der_size, >, 0))
+		goto out;
+
+	x509_subject_name_der = OPENSSL_malloc(x509_subject_name_der_size);
+	if (!ADBG_EXPECT_NOT_NULL(c, x509_subject_name_der))
+		goto out;
+
+	p = x509_subject_name_der;
+	x509_subject_name_der_size = i2d_X509_NAME(x509_subject_name, &p);
+	if (!ADBG_EXPECT_COMPARE_SIGNED(c, x509_subject_name_der_size, >, 0))
+		goto out;
+
+	/* Extract issuer's name */
+	x509_issuer_name = X509_get_issuer_name(x509_cert);
+	if (!ADBG_EXPECT_NOT_NULL(c, x509_issuer_name))
+		goto out;
+
+	x509_issuer_name_der_size = i2d_X509_NAME(x509_issuer_name, NULL);
+	if (!ADBG_EXPECT_COMPARE_SIGNED(c, x509_issuer_name_der_size, >, 0))
+		goto out;
+
+	x509_issuer_name_der = OPENSSL_malloc(x509_issuer_name_der_size);
+	if (!ADBG_EXPECT_NOT_NULL(c, x509_issuer_name_der))
+		goto out;
+
+	p = x509_issuer_name_der;
+	x509_issuer_name_der_size = i2d_X509_NAME(x509_issuer_name, &p);
+	if (!ADBG_EXPECT_COMPARE_SIGNED(c, x509_issuer_name_der_size, >, 0))
+		goto out;
+
+	/* Extract certificate's serial number */
+	x509_serial_number = X509_get_serialNumber(x509_cert);
+	if (!ADBG_EXPECT_NOT_NULL(c, x509_serial_number))
+		goto out;
+
+	x509_serial_number_der_size = i2d_ASN1_INTEGER(x509_serial_number, NULL);
+	if (!ADBG_EXPECT_COMPARE_SIGNED(c, x509_serial_number_der_size, >, 0))
+		goto out;
+
+	x509_serial_number_der = OPENSSL_malloc(x509_serial_number_der_size);
+	if (!ADBG_EXPECT_NOT_NULL(c, x509_serial_number_der))
+		goto out;
+
+	p = x509_serial_number_der;
+	x509_serial_number_der_size = i2d_ASN1_INTEGER(x509_serial_number, &p);
+	if (!ADBG_EXPECT_COMPARE_SIGNED(c, x509_serial_number_der_size, >, 0))
+		goto out;
+
+	/* Create the actual object in session */
+	assert(certificate_object[7].type == CKA_VALUE);
+	certificate_object[7].pValue = x509_cert_der;
+	certificate_object[7].ulValueLen = x509_cert_der_size;
+
+	assert(certificate_object[8].type == CKA_ISSUER);
+	certificate_object[8].pValue = x509_issuer_name_der;
+	certificate_object[8].ulValueLen = x509_issuer_name_der_size;
+
+	assert(certificate_object[9].type == CKA_SUBJECT);
+	certificate_object[9].pValue = x509_subject_name_der;
+	certificate_object[9].ulValueLen = x509_subject_name_der_size;
+
+	assert(certificate_object[10].type == CKA_SERIAL_NUMBER);
+	certificate_object[10].pValue = x509_serial_number_der;
+	certificate_object[10].ulValueLen = x509_serial_number_der_size;
+
+	rv = C_CreateObject(session, certificate_object,
+			    ARRAY_SIZE(certificate_object), &obj_hdl);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto out;
+
+	rv = C_DestroyObject(session, obj_hdl);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto out;
+
+	Do_ADBG_EndSubCase(c, NULL);
+
+	Do_ADBG_BeginSubCase(c, "Import X.509 Certificate with default values");
+
+	/* Create the actual object in session */
+	assert(certificate_object2[5].type == CKA_VALUE);
+	certificate_object2[5].pValue = x509_cert_der;
+	certificate_object2[5].ulValueLen = x509_cert_der_size;
+
+	assert(certificate_object2[6].type == CKA_ISSUER);
+	certificate_object2[6].pValue = x509_issuer_name_der;
+	certificate_object2[6].ulValueLen = x509_issuer_name_der_size;
+
+	assert(certificate_object2[7].type == CKA_SUBJECT);
+	certificate_object2[7].pValue = x509_subject_name_der;
+	certificate_object2[7].ulValueLen = x509_subject_name_der_size;
+
+	assert(certificate_object2[8].type == CKA_SERIAL_NUMBER);
+	certificate_object2[8].pValue = x509_serial_number_der;
+	certificate_object2[8].ulValueLen = x509_serial_number_der_size;
+
+	rv = C_CreateObject(session, certificate_object2,
+			    ARRAY_SIZE(certificate_object2), &obj_hdl);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto out;
+
+	rv = C_DestroyObject(session, obj_hdl);
+	if (!ADBG_EXPECT_CK_OK(c, rv))
+		goto out;
+
+	Do_ADBG_EndSubCase(c, NULL);
+
+	Do_ADBG_BeginSubCase(c, "Try import with invalid category");
+
+	/* Create the actual object in session */
+	assert(invalid_category_object[6].type == CKA_VALUE);
+	invalid_category_object[6].pValue = x509_cert_der;
+	invalid_category_object[6].ulValueLen = x509_cert_der_size;
+
+	assert(invalid_category_object[7].type == CKA_ISSUER);
+	invalid_category_object[7].pValue = x509_issuer_name_der;
+	invalid_category_object[7].ulValueLen = x509_issuer_name_der_size;
+
+	assert(invalid_category_object[8].type == CKA_SUBJECT);
+	invalid_category_object[8].pValue = x509_subject_name_der;
+	invalid_category_object[8].ulValueLen = x509_subject_name_der_size;
+
+	assert(invalid_category_object[9].type == CKA_SERIAL_NUMBER);
+	invalid_category_object[9].pValue = x509_serial_number_der;
+	invalid_category_object[9].ulValueLen = x509_serial_number_der_size;
+
+	rv = C_CreateObject(session, invalid_category_object,
+			    ARRAY_SIZE(invalid_category_object), &obj_hdl);
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_ATTRIBUTE_VALUE_INVALID, rv))
+		goto out;
+
+	Do_ADBG_EndSubCase(c, NULL);
+
+	Do_ADBG_BeginSubCase(c, "Try import with invalid category size");
+
+	/* Create the actual object in session */
+	assert(invalid_category_object2[6].type == CKA_VALUE);
+	invalid_category_object2[6].pValue = x509_cert_der;
+	invalid_category_object2[6].ulValueLen = x509_cert_der_size;
+
+	assert(invalid_category_object2[7].type == CKA_ISSUER);
+	invalid_category_object2[7].pValue = x509_issuer_name_der;
+	invalid_category_object2[7].ulValueLen = x509_issuer_name_der_size;
+
+	assert(invalid_category_object2[8].type == CKA_SUBJECT);
+	invalid_category_object2[8].pValue = x509_subject_name_der;
+	invalid_category_object2[8].ulValueLen = x509_subject_name_der_size;
+
+	assert(invalid_category_object2[9].type == CKA_SERIAL_NUMBER);
+	invalid_category_object2[9].pValue = x509_serial_number_der;
+	invalid_category_object2[9].ulValueLen = x509_serial_number_der_size;
+
+	rv = C_CreateObject(session, invalid_category_object2,
+			    ARRAY_SIZE(invalid_category_object2), &obj_hdl);
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_ATTRIBUTE_VALUE_INVALID, rv))
+		goto out;
+
+	Do_ADBG_EndSubCase(c, NULL);
+
+	Do_ADBG_BeginSubCase(c, "Try import with invalid name hash alg size");
+
+	/* Create the actual object in session */
+	assert(invalid_name_hash_alg_size[6].type == CKA_VALUE);
+	invalid_name_hash_alg_size[6].pValue = x509_cert_der;
+	invalid_name_hash_alg_size[6].ulValueLen = x509_cert_der_size;
+
+	assert(invalid_name_hash_alg_size[7].type == CKA_ISSUER);
+	invalid_name_hash_alg_size[7].pValue = x509_issuer_name_der;
+	invalid_name_hash_alg_size[7].ulValueLen = x509_issuer_name_der_size;
+
+	assert(invalid_name_hash_alg_size[8].type == CKA_SUBJECT);
+	invalid_name_hash_alg_size[8].pValue = x509_subject_name_der;
+	invalid_name_hash_alg_size[8].ulValueLen = x509_subject_name_der_size;
+
+	assert(invalid_name_hash_alg_size[9].type == CKA_SERIAL_NUMBER);
+	invalid_name_hash_alg_size[9].pValue = x509_serial_number_der;
+	invalid_name_hash_alg_size[9].ulValueLen = x509_serial_number_der_size;
+
+	rv = C_CreateObject(session, invalid_name_hash_alg_size,
+			    ARRAY_SIZE(invalid_name_hash_alg_size), &obj_hdl);
+	if (!ADBG_EXPECT_CK_RESULT(c, CKR_ATTRIBUTE_VALUE_INVALID, rv))
+		goto out;
+
+out:
+	OPENSSL_free(x509_serial_number_der);
+	OPENSSL_free(x509_issuer_name_der);
+	OPENSSL_free(x509_subject_name_der);
+	OPENSSL_free(x509_cert_der);
+	X509_free(x509_cert);
+	BIO_free(x509_bio);
+
+	Do_ADBG_EndSubCase(c, NULL);
+close_session:
+	ADBG_EXPECT_CK_OK(c, C_CloseSession(session));
+close_lib:
+	ADBG_EXPECT_CK_OK(c, close_lib());
+#endif
+}
+ADBG_CASE_DEFINE(pkcs11, 1024, xtest_pkcs11_test_1024,
+		 "PKCS11: X509 Certificate operations");
