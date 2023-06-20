@@ -1786,7 +1786,7 @@ ZTEST(pkcs11_1000, test_1008)
 
 	rv = init_lib_and_find_token_slot(&slot);
 	if (!ADBG_EXPECT_CK_OK(&c, rv))
-		return;
+		ADBG_Assert(&c);
 
 	rv = C_OpenSession(slot, session_flags, NULL, 0, &session);
 	if (!ADBG_EXPECT_CK_OK(&c, rv))
