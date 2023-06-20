@@ -30,7 +30,7 @@ manifest:
 
     - name: zephyr-optee-client
       remote: dsemenets
-      revision: skeleton
+      revision: libteec
 
     - name: littlefs
       remote: zephyr
