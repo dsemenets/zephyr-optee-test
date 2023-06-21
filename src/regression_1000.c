@@ -807,9 +807,9 @@ ZTEST(regression_1000, test_1011)
 
 	if (!ADBG_EXPECT_TEEC_SUCCESS(&c,
 		xtest_teec_open_session(&session, &uuid, NULL, &ret_orig)))
-		return;
+                ADBG_Assert(&c);
 
-	BeginSubCase("TA-to-TA via non-secure shared memory");
+        BeginSubCase("TA-to-TA via non-secure shared memory");
 	/*
 	 * Run the "complete crypto test suite" using TA-to-TA
 	 * communication
@@ -859,9 +859,9 @@ ZTEST(regression_1000, test_1012)
 		if (!ADBG_EXPECT_TEEC_SUCCESS(&c,
 			xtest_teec_open_session(&session1, &uuid, NULL,
 			                        &ret_orig)))
-			return;
+                        ADBG_Assert(&c);
 
-		op.params[0].value.a = 0;
+                op.params[0].value.a = 0;
 		op.params[1].tmpref.buffer = (void *)in;
 		op.params[1].tmpref.size = sizeof(in);
 		op.paramTypes = TEEC_PARAM_TYPES(TEEC_VALUE_INPUT,
@@ -1022,9 +1022,9 @@ static void xtest_tee_test_1013_single(struct ADBG_Case *c, double *mean_concurr
 	shm.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
 	if (!ADBG_EXPECT_TEEC_SUCCESS(c,
 		TEEC_AllocateSharedMemory(&xtest_teec_ctx, &shm)))
-		return;
+                return;
 
-	memset(shm.buffer, 0, shm.size);
+        memset(shm.buffer, 0, shm.size);
 	max_concurrency = 0;
 	nt = NUM_THREADS;
 
@@ -1184,11 +1184,10 @@ ZTEST(regression_1000, test_1017)
 	shm.flags = TEEC_MEM_INPUT | TEEC_MEM_OUTPUT;
 	if (!ADBG_EXPECT_TEEC_SUCCESS(&c,
 		TEEC_AllocateSharedMemory(&xtest_teec_ctx, &shm)))
-		return;
+                ADBG_Assert(&c);
 
-	if (!ADBG_EXPECT_TEEC_SUCCESS(&c,
+        if (!ADBG_EXPECT_TEEC_SUCCESS(&c,
 			xtest_teec_open_session(&session, &os_test_ta_uuid, NULL, &ret_orig))) {
-		ADBG_Assert(&c);
 		goto out;
 	}
 
