@@ -26,6 +26,7 @@ EMBED_8100FILE(mid_crt cert/mid.crt)
 EMBED_8100FILE(my_crt cert/my.crt)
 EMBED_8100FILE(my_csr cert/my.csr)
 
+
 zephyr_library_sources(adbg/src/adbg_expect.c)
 zephyr_library_sources(adbg/src/adbg_log.c)
 zephyr_library_sources(adbg/src/security_utils_hex.c)
@@ -47,3 +48,7 @@ zephyr_library_include_directories(${ZEPHYR_OPTEELIB_MODULE_DIR}/public)
 
 #add_subdirectory(adbg)
 
+# Add prebuilt to includes so assembler can find this files
+include_directories(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/prebuilt)
+zephyr_library_sources(ta_table/ta_table.c)
+zephyr_library_sources(ta_table/ta_table.S)
